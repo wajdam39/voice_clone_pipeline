@@ -60,6 +60,33 @@ mel = audio_to_melspectrogram(waveform, sr)
 reconstructed = melspectrogram_to_audio(mel, sr)
 ```
 
+### `load_audio` i katalog `data/raw`
+
+`preprocessing.audio_utils.load_audio` domyślnie wie o katalogu `data/raw`
+(ten sam, do którego domyślnie zapisuje `downloader.youtube_downloader`).
+Jeśli podana ścieżka nie istnieje bezpośrednio, funkcja spróbuje znaleźć
+plik o tej nazwie w `data/raw`, więc po pobraniu utworu wystarczy podać samą
+nazwę pliku:
+
+```python
+from downloader.youtube_downloader import search_and_download_audio
+from preprocessing.audio_utils import list_audio_files, load_audio
+
+# Pobiera do domyślnego "data/raw"
+audio_path = search_and_download_audio("Artysta - Tytuł utworu", "data/raw")
+
+# Można podać pełną ścieżkę zwróconą przez downloader...
+waveform, sr = load_audio(audio_path)
+
+# ...albo samą nazwę pliku — zostanie znaleziona w data/raw automatycznie:
+waveform, sr = load_audio("Artysta - Tytuł utworu.wav")
+
+# Przetwarzanie wsadowe wszystkich pobranych plików naraz:
+for path in list_audio_files():  # skanuje data/raw
+    waveform, sr = load_audio(path)
+    ...
+```
+
 ### Pobieranie z poziomu linii poleceń
 
 Moduł `youtube_downloader.py` można też uruchomić bezpośrednio jako skrypt
