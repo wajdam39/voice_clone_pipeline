@@ -5,7 +5,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from downloader.youtube_downloader import download_audio, search_and_download_audio
+from downloader.youtube_downloader import (
+    download_audio,
+    search_and_download_audio,
+    search_and_download_many,
+)
 
 
 def test_download_audio_returns_expected_path(tmp_path):
@@ -121,3 +125,98 @@ def test_search_and_download_audio_raises_when_no_results(tmp_path):
                 query="an obscure query with no results",
                 output_dir=str(output_dir),
             )
+
+
+def test_search_and_download_many_downloads_all_results(tmp_path):
+    output_dir = tmp_path / "raw"
+
+    entries = [{"title": f"Track {i}", "ext": "webm", "webpage_url": f"https://yt/{i}"} for i in range(5)]
+    search_result = {"entries": entries}
+
+    mock_ydl_instance = MagicMock()
+    mock_ydl_instance.__enter__.return_value = mock_ydl_instance
+    mock_ydl_instance.__exit__.return_value = False
+
+    created_files = []
+
+    def fake_extract_info(target, download=False):
+        if target.startswith("ytsearch"):
+            return search_result
+        # target is a per-video URL; find the matching entry by url
+        entry = next(e for e in entries if e["webpage_url"] == target)
+        final_path = output_dir / f"{entry['title']}.wav"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        final_path.touch()
+        created_files.append(final_path)
+        return entry
+
+    def fake_prepare_filename(info):
+        return str(output_dir / f"{info['title']}.webm")
+
+    mock_ydl_instance.extract_info.side_effect = fake_extract_info
+    mock_ydl_instance.prepare_filename.side_effect = fake_prepare_filename
+
+    fake_yt_dlp_module = MagicMock()
+    fake_yt_dlp_module.YoutubeDL.return_value = mock_ydl_instance
+
+    with patch.dict("sys.modules", {"yt_dlp": fake_yt_dlp_module}):
+        result_paths = search_and_download_many(
+            query="some topic",
+            output_dir=str(output_dir),
+            count=5,
+            audio_format="wav",
+        )
+
+    assert len(result_paths) == 5
+    assert len(created_files) == 5
+
+
+def test_search_and_download_many_skips_failed_entries(tmp_path):
+    output_dir = tmp_path / "raw"
+
+    entries = [
+        {"title": "Good Track", "ext": "webm", "webpage_url": "https://yt/good"},
+        {"title": "Bad Track", "ext": "webm", "webpage_url": "https://yt/bad"},
+    ]
+    search_result = {"entries": entries}
+
+    mock_ydl_instance = MagicMock()
+    mock_ydl_instance.__enter__.return_value = mock_ydl_instance
+    mock_ydl_instance.__exit__.return_value = False
+
+    def fake_extract_info(target, download=False):
+        if target.startswith("ytsearch"):
+            return search_result
+        if target == "https://yt/bad":
+            raise RuntimeError("simulated download failure")
+        entry = next(e for e in entries if e["webpage_url"] == target)
+        final_path = output_dir / f"{entry['title']}.wav"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        final_path.touch()
+        return entry
+
+    def fake_prepare_filename(info):
+        return str(output_dir / f"{info['title']}.webm")
+
+    mock_ydl_instance.extract_info.side_effect = fake_extract_info
+    mock_ydl_instance.prepare_filename.side_effect = fake_prepare_filename
+
+    fake_yt_dlp_module = MagicMock()
+    fake_yt_dlp_module.YoutubeDL.return_value = mock_ydl_instance
+
+    with patch.dict("sys.modules", {"yt_dlp": fake_yt_dlp_module}):
+        result_paths = search_and_download_many(
+            query="some topic",
+            output_dir=str(output_dir),
+            count=2,
+            audio_format="wav",
+            skip_errors=True,
+        )
+
+    assert len(result_paths) == 1
+    assert "Good Track" in result_paths[0]
+
+
+def test_search_and_download_many_raises_on_invalid_count(tmp_path):
+    with pytest.raises(ValueError):
+        search_and_download_many(query="x", output_dir=str(tmp_path), count=0)

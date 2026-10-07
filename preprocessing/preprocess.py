@@ -34,7 +34,7 @@ DEFAULT_PROCESSED_DIR = "data/processed"
 DEFAULT_CONFIG_PATH = "configs/config.yaml"
 
 
-def _safe_print(message: str) -> None:
+def safe_print(message: str) -> None:
     """Print ``message``, falling back to a safe encoding on narrow consoles.
 
     Some Windows terminals use a legacy codepage (e.g. cp1252) that cannot
@@ -174,9 +174,9 @@ def main(argv: Optional[list] = None) -> None:
 
     output_paths = preprocess_directory(args.input_dir, args.output_dir, **mel_kwargs)
 
-    _safe_print(f"Przetworzono {len(output_paths)} plik(ów) audio z '{args.input_dir}':")
+    safe_print(f"Przetworzono {len(output_paths)} plik(ów) audio z '{args.input_dir}':")
     for path in output_paths:
-        _safe_print(f"  -> {path}")
+        safe_print(f"  -> {path}")
 
 
 if __name__ == "__main__":

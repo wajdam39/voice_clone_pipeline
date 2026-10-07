@@ -17,7 +17,7 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 
 def _import_yt_dlp():
@@ -150,6 +150,76 @@ def search_and_download_audio(
         return _resolve_final_path(ydl, entries[0], audio_format)
 
 
+def search_and_download_many(
+    query: str,
+    output_dir: str,
+    count: int = 200,
+    audio_format: str = "wav",
+    skip_errors: bool = True,
+) -> List[str]:
+    """Search YouTube for ``query`` and download audio for up to ``count`` results.
+
+    This is the bulk counterpart of ``search_and_download_audio``: instead of
+    downloading only the single best match, it fetches ``count`` search
+    results for the same query and downloads the audio of each one. Useful
+    for building a dataset of many tracks from a single keyword/topic.
+
+    Args:
+        query: Free-text search phrase, e.g. an artist name or genre.
+        output_dir: Directory where audio files will be saved. Created if it
+            does not already exist.
+        count: Maximum number of videos to download for this query.
+        audio_format: Target audio codec/container (e.g. "wav", "mp3").
+        skip_errors: If True (default), a failure on an individual video
+            (e.g. region-locked, age-restricted, no audio stream) is logged
+            and skipped so the rest of the batch can still complete. If
+            False, the first error aborts the whole batch.
+
+    Returns:
+        A list of paths to the successfully downloaded audio files. May have
+        fewer than ``count`` entries if some results failed and
+        ``skip_errors`` is True, or if fewer than ``count`` results exist.
+
+    Raises:
+        ImportError: If the optional ``yt-dlp`` dependency is not installed.
+        ValueError: If ``query`` is empty/blank or ``count`` is not positive.
+        RuntimeError: If no search results were found at all.
+    """
+    if not query or not query.strip():
+        raise ValueError("Search query must not be empty.")
+    if count <= 0:
+        raise ValueError("count must be a positive integer.")
+
+    yt_dlp = _import_yt_dlp()
+    ydl_opts = _build_ydl_opts(output_dir, audio_format)
+    search_term = f"ytsearch{count}:{query.strip()}"
+
+    downloaded_paths: List[str] = []
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        # First, resolve the search results WITHOUT downloading, so a single
+        # broken entry can't abort metadata extraction for the whole batch.
+        search_info = ydl.extract_info(search_term, download=False)
+        entries = list(search_info.get("entries") or [])
+
+        if not entries:
+            raise RuntimeError(f"No YouTube results found for query: '{query}'")
+
+        for entry in entries:
+            video_url = entry.get("webpage_url") or entry.get("url")
+            try:
+                video_info = ydl.extract_info(video_url, download=True)
+                downloaded_paths.append(
+                    _resolve_final_path(ydl, video_info, audio_format)
+                )
+            except Exception as exc:  # noqa: BLE001 - intentionally broad for batch robustness
+                if not skip_errors:
+                    raise
+                print(f"[WARN] Skipping '{video_url}': {exc}")
+
+    return downloaded_paths
+
+
 def main(argv: Optional[list] = None) -> None:
     """Small interactive CLI: type a search phrase, get an audio file back."""
     parser = argparse.ArgumentParser(
@@ -172,14 +242,27 @@ def main(argv: Optional[list] = None) -> None:
         default="wav",
         help="Target audio format, e.g. wav, mp3 (default: wav).",
     )
+    parser.add_argument(
+        "--count",
+        type=int,
+        default=1,
+        help="Number of videos to download for the query (default: 1, the best match). "
+        "Use e.g. --count 200 to download many tracks for the same query.",
+    )
     args = parser.parse_args(argv)
 
     query = args.query or input("Wpisz słowo/frazę do wyszukania na YouTube: ").strip()
     if not query:
         raise SystemExit("Nie podano frazy wyszukiwania.")
 
-    path = search_and_download_audio(query, args.output_dir, args.audio_format)
-    print(f"Pobrano: {path}")
+    if args.count == 1:
+        path = search_and_download_audio(query, args.output_dir, args.audio_format)
+        print(f"Pobrano: {path}")
+    else:
+        paths = search_and_download_many(
+            query, args.output_dir, count=args.count, audio_format=args.audio_format
+        )
+        print(f"Pobrano {len(paths)}/{args.count} plik(ów) dla zapytania '{query}'.")
 
 
 if __name__ == "__main__":

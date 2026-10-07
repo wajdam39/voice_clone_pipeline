@@ -114,6 +114,60 @@ Przetworzono 3 plik(ów) audio z 'data/raw':
   -> ...
 ```
 
+### Masowe pobieranie wielu utworów na podstawie jednego słowa (`search_and_download_many`)
+
+> ⚠️ **Uwaga prawna:** większość muzyki na YouTube jest chroniona prawem
+> autorskim. Pobieranie i wykorzystywanie jej (np. do trenowania modelu
+> klonowania głosu) bez zgody może naruszać prawo autorskie oraz Warunki
+> Korzystania z YouTube. Używaj tego narzędzia wyłącznie na treściach, do
+> których masz prawa, objętych licencją zezwalającą na reuse (np. Creative
+> Commons), lub na własnych nagraniach.
+
+Aby na podstawie jednego słowa/frazy pobrać wiele utworów naraz (np. 200),
+użyj `search_and_download_many`:
+
+```python
+from downloader.youtube_downloader import search_and_download_many
+
+paths = search_and_download_many("fraza wyszukiwania", "data/raw", count=200)
+print(f"Pobrano {len(paths)} plików")
+```
+
+Albo z CLI:
+
+```bash
+python -m downloader.youtube_downloader "fraza wyszukiwania" --count 200
+```
+
+Pojedyncze niedostępne/zablokowane filmy są domyślnie pomijane
+(`skip_errors=True`), więc jeden błąd nie przerywa całej serii pobierania.
+
+### Pobieranie + preprocessing 200 utworów jedną komendą (`scripts/build_dataset.py`)
+
+Najwygodniejszy sposób na zbudowanie zbioru danych z jednego słowa kluczowego
+— jedna komenda pobiera do 200 utworów **i od razu** przetwarza je wszystkie
+na mel-spektrogramy `.npy`:
+
+```bash
+python -m scripts.build_dataset "fraza wyszukiwania" --count 200
+```
+
+Co się dzieje pod spodem:
+1. `search_and_download_many("fraza wyszukiwania", "data/raw", count=200)` —
+   pobiera do 200 utworów do `data/raw`.
+2. `preprocess_directory("data/raw", "data/processed")` — przetwarza
+   wszystkie pobrane pliki na log-mel-spektrogramy `.npy` w `data/processed`,
+   gotowe do `models/train.py`.
+
+Opcjonalne argumenty:
+
+```bash
+python -m scripts.build_dataset "fraza" --count 200 --raw-dir data/raw --processed-dir data/processed --format wav --config configs/config.yaml --fail-fast
+```
+
+- `--fail-fast` — przerywa całe pobieranie przy pierwszym błędzie (domyślnie
+  błędy pojedynczych filmów są pomijane).
+
 ### Pobieranie z poziomu linii poleceń
 
 Moduł `youtube_downloader.py` można też uruchomić bezpośrednio jako skrypt
