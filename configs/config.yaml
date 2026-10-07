@@ -1,0 +1,29 @@
+downloader:
+  output_dir: "data/raw"
+  audio_format: "wav"
+  sample_rate: 22050
+
+preprocessing:
+  target_sample_rate: 22050
+  n_fft: 1024
+  hop_length: 256
+  win_length: 1024
+  n_mels: 80
+  f_min: 0
+  f_max: 8000
+
+model:
+  hidden_dim: 256
+  num_layers: 4
+  dropout: 0.1
+
+train:
+  batch_size: 16
+  learning_rate: 0.0001
+  num_epochs: 100
+  checkpoint_dir: "checkpoints"
+  log_dir: "logs"
+
+vocoder:
+  type: "hifigan"
+  checkpoint_path: "checkpoints/vocoder/hifigan.pt"
