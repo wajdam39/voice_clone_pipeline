@@ -87,6 +87,33 @@ for path in list_audio_files():  # skanuje data/raw
     ...
 ```
 
+### Uruchamianie preprocessingu z poziomu linii poleceń
+
+Po pobraniu audio do `data/raw` (patrz sekcja niżej) uruchom preprocessing
+wszystkich plików naraz za pomocą:
+
+```bash
+python -m preprocessing.preprocess
+```
+
+Domyślnie skrypt skanuje `data/raw`, dla każdego pliku audio liczy
+znormalizowany, log-skalowany mel-spektrogram (parametry wczytywane z
+`configs/config.yaml` -> sekcja `preprocessing`) i zapisuje wynik jako
+`.npy` w `data/processed`, gotowy do użycia przez `models/train.py`.
+
+Opcjonalne argumenty:
+
+```bash
+python -m preprocessing.preprocess --input-dir data/raw --output-dir data/processed --config configs/config.yaml
+```
+
+Przykładowy output:
+```
+Przetworzono 3 plik(ów) audio z 'data/raw':
+  -> data/processed/Artysta - Tytuł utworu.npy
+  -> ...
+```
+
 ### Pobieranie z poziomu linii poleceń
 
 Moduł `youtube_downloader.py` można też uruchomić bezpośrednio jako skrypt
