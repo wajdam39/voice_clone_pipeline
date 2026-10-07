@@ -10,7 +10,7 @@ from typing import Optional
 
 import yaml
 
-from models.dataset import VoiceDataset
+from models.dataset import SegmentedVoiceDataset
 from models.model import VoiceCloneModel
 
 
@@ -50,7 +50,12 @@ def train(data_dir: str, config: dict) -> None:
     if not file_paths:
         raise FileNotFoundError(f"No .npy files found in '{data_dir}'.")
 
-    dataset = VoiceDataset(file_paths)
+    segmentation_cfg = config.get("segmentation", {})
+    dataset = SegmentedVoiceDataset(
+        file_paths,
+        segment_length=segmentation_cfg.get("segment_length", 512),
+        hop=segmentation_cfg.get("hop", 256),
+    )
     train_cfg = config.get("train", {})
     batch_size = train_cfg.get("batch_size", 16)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)

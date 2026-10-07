@@ -180,6 +180,63 @@ normalized_mel = normalize_melspectrogram(mel, method="zscore")
 output_paths = normalize_npy_directory("data/processed", "data/processed_normalized")
 ```
 
+### Segmentacja spektrogramów na stałe okna (`models.segmentation` / `SegmentedVoiceDataset`)
+
+Po normalizacji spektrogramów warto podzielić je na **stałe, nakładające się
+fragmenty czasowe** (np. 512 ramek, krok 256), zamiast podawać do sieci całe
+utwory o różnej długości. Dzięki temu każdy przykład treningowy ma identyczny
+kształt `[n_mels, segment_length]` (domyślnie `[80, 512]`) i batchowanie w
+`DataLoader` działa bez potrzeby pisania własnego `collate_fn`.
+
+**Moduł `models/segmentation.py`** (czysty NumPy, bez zależności od PyTorch):
+- `segment_spectrogram(mel, segment_length=512, hop=256)` — dzieli pojedynczy
+  spektrogram na listę okien o stałym kształcie; ostatni fragment, krótszy niż
+  `segment_length`, jest dopełniany zerami (zero-padding).
+- `compute_segment_starts(n_frames, segment_length, hop)` — wylicza same
+  indeksy początków okien (z nakładaniem się, gdy `hop < segment_length`).
+- `pad_to_length(mel, length)` — samodzielna funkcja do zero-paddingu.
+- `build_segment_index(npy_paths, segment_length, hop)` — buduje lekki indeks
+  `(ścieżka_pliku, start_ramki)` dla wielu plików naraz, odczytując tylko
+  kształty plików (bez wczytywania całych danych do RAM) — wydajne nawet dla
+  setek utworów.
+- `generate_segments(npy_paths, segment_length, hop)` — leniwy generator
+  NumPy jako alternatywa bez PyTorcha.
+
+**Klasa `models.dataset.SegmentedVoiceDataset`** — gotowy `torch.utils.data.Dataset`:
+
+```python
+from models.dataset import SegmentedVoiceDataset
+from torch.utils.data import DataLoader
+from preprocessing.audio_utils import list_audio_files  # lub glob na *.npy
+
+npy_paths = ["data/processed_normalized/utwor1.npy", "data/processed_normalized/utwor2.npy"]
+
+dataset = SegmentedVoiceDataset(npy_paths, segment_length=512, hop=256)
+print(len(dataset))        # liczba fragmentów (okien) w całym zbiorze
+print(dataset[0].shape)    # torch.Size([80, 512])
+
+loader = DataLoader(dataset, batch_size=16, shuffle=True)
+batch = next(iter(loader))
+print(batch.shape)         # torch.Size([16, 80, 512])
+```
+
+Parametry domyślne (`segment_length=512`, `hop=256`, czyli 50% nakładania się
+okien) odpowiadają sekcji `segmentation` w `configs/config.yaml`:
+
+```yaml
+segmentation:
+  segment_length: 512
+  hop: 256
+```
+
+`models/train.py` korzysta z `SegmentedVoiceDataset` automatycznie — żadnej
+dodatkowej komendy nie trzeba uruchamiać osobno; wystarczy wskazać katalog
+przetworzonych (i opcjonalnie znormalizowanych) plików `.npy`:
+
+```bash
+python -m models.train --data-dir data/processed_normalized --config configs/config.yaml
+```
+
 ### Statystyki zbioru danych (`compute_npy_statistics` / `generate_dataset_statistics`)
 
 Po przetworzeniu audio na mel-spektrogramy (`data/processed/*.npy`) możesz
