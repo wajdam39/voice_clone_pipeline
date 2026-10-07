@@ -43,17 +43,43 @@ pytest
 ## Użycie (szkic)
 
 ```python
-from downloader.youtube_downloader import download_audio
+from downloader.youtube_downloader import download_audio, search_and_download_audio
 from preprocessing.audio_utils import load_audio, normalize_audio
 from preprocessing.spectrogram import audio_to_melspectrogram
 from vocoder.vocoder import melspectrogram_to_audio
 
+# Pobieranie po bezpośrednim linku:
 audio_path = download_audio("https://www.youtube.com/watch?v=...", "data/raw")
+
+# Pobieranie na podstawie wyszukanej frazy (np. nazwa utworu/artysty):
+audio_path = search_and_download_audio("Artysta - Tytuł utworu", "data/raw")
+
 waveform, sr = load_audio(audio_path)
 waveform = normalize_audio(waveform)
 mel = audio_to_melspectrogram(waveform, sr)
 reconstructed = melspectrogram_to_audio(mel, sr)
 ```
+
+### Pobieranie z poziomu linii poleceń
+
+Moduł `youtube_downloader.py` można też uruchomić bezpośrednio jako skrypt
+CLI — wpisujesz frazę, a program wyszukuje najlepsze dopasowanie na YouTube
+i pobiera jego audio:
+
+```bash
+python -m downloader.youtube_downloader "Artysta - Tytuł utworu"
+# lub bez argumentu — zostaniesz zapytany interaktywnie:
+python -m downloader.youtube_downloader
+```
+
+Opcjonalne argumenty:
+
+```bash
+python -m downloader.youtube_downloader "fraza" --output-dir data/raw --format mp3
+```
+
+> **Wymaganie:** do konwersji pobranego strumienia na docelowy format audio
+> (wav/mp3) wymagany jest zainstalowany i dostępny w PATH systemu **FFmpeg**.
 
 ## Roadmapa
 
