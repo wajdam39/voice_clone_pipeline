@@ -29,9 +29,10 @@ from preprocessing.audio_utils import (
     normalize_audio,
     resample_audio,
 )
-from preprocessing.spectrogram import audio_to_melspectrogram
+from preprocessing.spectrogram import audio_to_melspectrogram, normalize_melspectrogram
 
 DEFAULT_PROCESSED_DIR = "data/processed"
+DEFAULT_NORMALIZED_DIR = "data/processed_normalized"
 DEFAULT_CONFIG_PATH = "configs/config.yaml"
 DEFAULT_STATS_PATH = "data/dataset_stats.json"
 
@@ -74,6 +75,8 @@ def preprocess_file(
     n_mels: int = 80,
     f_min: float = 0.0,
     f_max: Optional[float] = 8000.0,
+    normalize_spectrogram: bool = False,
+    normalize_method: str = "zscore",
 ) -> str:
     """Preprocess a single audio file into a saved mel-spectrogram ``.npy`` file.
 
@@ -84,6 +87,11 @@ def preprocess_file(
         target_sample_rate: Sample rate to resample audio to before analysis.
         n_fft, hop_length, win_length, n_mels, f_min, f_max: Mel-spectrogram
             parameters, forwarded to ``audio_to_melspectrogram``.
+        normalize_spectrogram: If True, apply local (per-file) normalization
+            to the mel-spectrogram before saving, via
+            ``preprocessing.spectrogram.normalize_melspectrogram``.
+        normalize_method: Normalization method to use when
+            ``normalize_spectrogram`` is True: ``"zscore"`` or ``"minmax"``.
 
     Returns:
         The path to the saved ``.npy`` file.
@@ -102,6 +110,9 @@ def preprocess_file(
         f_min=f_min,
         f_max=f_max,
     )
+
+    if normalize_spectrogram:
+        mel = normalize_melspectrogram(mel, method=normalize_method)
 
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     stem = Path(audio_path).stem
@@ -138,6 +149,56 @@ def preprocess_directory(
         preprocess_file(audio_path, output_dir, **mel_kwargs)
         for audio_path in audio_files
     ]
+
+
+def normalize_npy_directory(
+    input_dir: str = DEFAULT_PROCESSED_DIR,
+    output_dir: str = DEFAULT_NORMALIZED_DIR,
+    method: str = "zscore",
+) -> List[str]:
+    """Apply local normalization to every ``.npy`` mel-spectrogram in a directory.
+
+    Each spectrogram is normalized independently, using only its own values
+    (see ``preprocessing.spectrogram.normalize_melspectrogram``) — this is
+    *local*/per-file normalization, not dataset-wide normalization. Useful
+    when you already have preprocessed (un-normalized) ``.npy`` files and
+    want to (re-)normalize them without re-running audio preprocessing.
+
+    Args:
+        input_dir: Directory containing raw (un-normalized) ``.npy``
+            mel-spectrogram files (default: ``data/processed``).
+        output_dir: Directory to save normalized ``.npy`` files into
+            (default: ``data/processed_normalized``). Kept separate from
+            ``input_dir`` by default so the original log-mel-spectrograms
+            (e.g. needed by a vocoder expecting the original scale) are not
+            overwritten.
+        method: Normalization method, forwarded to
+            ``normalize_melspectrogram`` (``"zscore"`` or ``"minmax"``).
+
+    Returns:
+        A list of paths to the saved, normalized ``.npy`` files.
+
+    Raises:
+        FileNotFoundError: If no ``.npy`` files are found in ``input_dir``.
+    """
+    dir_path = Path(input_dir)
+    npy_paths = sorted(dir_path.glob("*.npy")) if dir_path.exists() else []
+
+    if not npy_paths:
+        raise FileNotFoundError(f"No .npy files found in '{input_dir}'.")
+
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+    output_paths = []
+    for npy_path in npy_paths:
+        mel = np.load(npy_path)
+        normalized = normalize_melspectrogram(mel, method=method)
+
+        out_path = Path(output_dir) / npy_path.name
+        np.save(out_path, normalized)
+        output_paths.append(str(out_path))
+
+    return output_paths
 
 
 def compute_npy_statistics(processed_dir: str = DEFAULT_PROCESSED_DIR) -> Dict:
@@ -321,7 +382,40 @@ def main(argv: Optional[list] = None) -> None:
         help="Skip preprocessing and only (re)generate statistics for existing "
         "--output-dir .npy files.",
     )
+    parser.add_argument(
+        "--normalize",
+        action="store_true",
+        help="Apply local (per-file) spectrogram normalization while preprocessing audio.",
+    )
+    parser.add_argument(
+        "--normalize-method",
+        choices=["zscore", "minmax"],
+        default="zscore",
+        help="Normalization method to use (default: zscore).",
+    )
+    parser.add_argument(
+        "--normalize-existing",
+        action="store_true",
+        help="Skip audio preprocessing and only normalize existing .npy files "
+        "from --output-dir into --normalized-dir.",
+    )
+    parser.add_argument(
+        "--normalized-dir",
+        default=DEFAULT_NORMALIZED_DIR,
+        help=f"Directory to save normalized .npy files into when using "
+        f"--normalize-existing (default: {DEFAULT_NORMALIZED_DIR}).",
+    )
     args = parser.parse_args(argv)
+
+    if args.normalize_existing:
+        normalized_paths = normalize_npy_directory(
+            args.output_dir, args.normalized_dir, method=args.normalize_method
+        )
+        safe_print(
+            f"Znormalizowano {len(normalized_paths)} plik(ów) .npy z '{args.output_dir}' "
+            f"do '{args.normalized_dir}' (metoda: {args.normalize_method})."
+        )
+        return
 
     if not args.stats_only:
         config = load_preprocessing_config(args.config)
@@ -333,6 +427,8 @@ def main(argv: Optional[list] = None) -> None:
             "n_mels": config.get("n_mels", 80),
             "f_min": config.get("f_min", 0.0),
             "f_max": config.get("f_max", 8000.0),
+            "normalize_spectrogram": args.normalize,
+            "normalize_method": args.normalize_method,
         }
 
         output_paths = preprocess_directory(args.input_dir, args.output_dir, **mel_kwargs)

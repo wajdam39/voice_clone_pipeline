@@ -11,6 +11,7 @@ librosa = pytest.importorskip("librosa")
 from preprocessing.preprocess import (
     compute_npy_statistics,
     generate_dataset_statistics,
+    normalize_npy_directory,
     preprocess_directory,
     preprocess_file,
     save_statistics,
@@ -110,6 +111,59 @@ def test_save_statistics_writes_valid_json(tmp_path):
     with open(output_path, "r", encoding="utf-8") as f:
         loaded = json.load(f)
     assert loaded == stats
+
+
+def test_preprocess_file_with_normalization(tmp_path):
+    sr = 22050
+    waveform = _make_sine_wave(sr=sr)
+    audio_path = tmp_path / "input.wav"
+    sf.write(audio_path, waveform, sr)
+
+    output_dir = tmp_path / "processed"
+    out_path = preprocess_file(
+        str(audio_path),
+        str(output_dir),
+        target_sample_rate=sr,
+        n_mels=80,
+        normalize_spectrogram=True,
+        normalize_method="zscore",
+    )
+
+    mel = np.load(out_path)
+    assert mel.shape[0] == 80
+    assert np.mean(mel) == pytest.approx(0.0, abs=1e-3)
+    assert np.std(mel) == pytest.approx(1.0, abs=1e-3)
+
+
+def test_normalize_npy_directory_creates_normalized_files(tmp_path):
+    input_dir = tmp_path / "processed"
+    input_dir.mkdir()
+
+    mel_a = (np.random.randn(80, 40) * 5 + 2).astype(np.float32)
+    mel_b = (np.random.randn(80, 20) * 10 - 3).astype(np.float32)
+    np.save(input_dir / "a.npy", mel_a)
+    np.save(input_dir / "b.npy", mel_b)
+
+    output_dir = tmp_path / "processed_normalized"
+    output_paths = normalize_npy_directory(str(input_dir), str(output_dir), method="zscore")
+
+    assert len(output_paths) == 2
+    for path in output_paths:
+        mel = np.load(path)
+        assert np.mean(mel) == pytest.approx(0.0, abs=1e-3)
+        assert np.std(mel) == pytest.approx(1.0, abs=1e-3)
+
+    # Original files must remain untouched (not overwritten).
+    original_a = np.load(input_dir / "a.npy")
+    np.testing.assert_array_equal(original_a, mel_a)
+
+
+def test_normalize_npy_directory_raises_when_no_npy_files(tmp_path):
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+
+    with pytest.raises(FileNotFoundError):
+        normalize_npy_directory(str(empty_dir), str(tmp_path / "out"))
 
 
 def test_generate_dataset_statistics_end_to_end(tmp_path):

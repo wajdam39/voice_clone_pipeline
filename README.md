@@ -142,6 +142,44 @@ python -m downloader.youtube_downloader "fraza wyszukiwania" --count 200
 Pojedyncze niedostępne/zablokowane filmy są domyślnie pomijane
 (`skip_errors=True`), więc jeden błąd nie przerywa całej serii pobierania.
 
+### Lokalna normalizacja spektrogramów (`normalize_melspectrogram`)
+
+`preprocessing.spectrogram.normalize_melspectrogram` normalizuje **każdy
+mel-spektrogram osobno**, wyłącznie na podstawie jego własnych statystyk
+(w odróżnieniu od normalizacji globalnej, która liczyłaby statystyki z
+całego zbioru — patrz `compute_npy_statistics`). Dostępne metody:
+- `"zscore"` (domyślna): `(mel - mean) / (std + eps)` — zero średnia, jednostkowe odchylenie.
+- `"minmax"`: przeskalowanie wartości do zakresu `[0, 1]`.
+
+**Opcja 1 — normalizuj od razu podczas przetwarzania audio:**
+
+```bash
+python -m preprocessing.preprocess --normalize
+python -m preprocessing.preprocess --normalize --normalize-method minmax
+```
+
+**Opcja 2 — znormalizuj już istniejące pliki `.npy` z `data/processed`**
+(bez ponownego przetwarzania audio; wynik trafia do osobnego katalogu
+`data/processed_normalized`, żeby nie nadpisać oryginalnych log-mel-spektrogramów):
+
+```bash
+python -m preprocessing.preprocess --normalize-existing
+python -m preprocessing.preprocess --normalize-existing --normalized-dir data/processed_normalized --normalize-method zscore
+```
+
+Programistycznie:
+
+```python
+from preprocessing.spectrogram import normalize_melspectrogram
+from preprocessing.preprocess import normalize_npy_directory
+
+# Pojedynczy spektrogram:
+normalized_mel = normalize_melspectrogram(mel, method="zscore")
+
+# Cały katalog plików .npy naraz:
+output_paths = normalize_npy_directory("data/processed", "data/processed_normalized")
+```
+
 ### Statystyki zbioru danych (`compute_npy_statistics` / `generate_dataset_statistics`)
 
 Po przetworzeniu audio na mel-spektrogramy (`data/processed/*.npy`) możesz
