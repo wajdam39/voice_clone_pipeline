@@ -142,6 +142,67 @@ python -m downloader.youtube_downloader "fraza wyszukiwania" --count 200
 Pojedyncze niedostępne/zablokowane filmy są domyślnie pomijane
 (`skip_errors=True`), więc jeden błąd nie przerywa całej serii pobierania.
 
+### Statystyki zbioru danych (`compute_npy_statistics` / `generate_dataset_statistics`)
+
+Po przetworzeniu audio na mel-spektrogramy (`data/processed/*.npy`) możesz
+wygenerować zbiorcze statystyki opisujące zbiór danych (liczba plików, liczba
+klatek czasowych, rozkład wartości mel-spektrogramu itp.) i zapisać je jako
+JSON w folderze `data/`.
+
+Najprościej — uruchom sam preprocessing, statystyki generują się automatycznie:
+
+```bash
+python -m preprocessing.preprocess
+```
+
+Domyślnie zapisze to statystyki do **`data/dataset_stats.json`** zaraz po
+przetworzeniu plików z `data/raw` do `data/processed`.
+
+Jeśli chcesz tylko (ponownie) wygenerować statystyki dla już istniejących
+plików `.npy` w `data/processed`, bez ponownego przetwarzania audio:
+
+```bash
+python -m preprocessing.preprocess --stats-only
+```
+
+Możesz też wskazać inne katalogi/ścieżki:
+
+```bash
+python -m preprocessing.preprocess --stats-only --output-dir data/processed --stats-output data/dataset_stats.json
+```
+
+Aby pominąć generowanie statystyk podczas zwykłego przetwarzania:
+
+```bash
+python -m preprocessing.preprocess --no-stats
+```
+
+Przykładowa zawartość `data/dataset_stats.json`:
+
+```json
+{
+  "processed_dir": "data/processed",
+  "num_files": 3,
+  "n_mels": 80,
+  "total_frames": 15234,
+  "frames_per_file": {"mean": 5078.0, "min": 4210, "max": 6100, "std": 780.3},
+  "value_stats": {"mean": -3.21, "std": 2.05, "min": -11.5, "max": 2.3},
+  "files": [
+    {"file": "Artysta - Tytuł.npy", "shape": [80, 5210], "mean": -3.1, "std": 2.0, "min": -11.2, "max": 2.1},
+    ...
+  ]
+}
+```
+
+Funkcje są też dostępne programistycznie:
+
+```python
+from preprocessing.preprocess import generate_dataset_statistics
+
+stats_path = generate_dataset_statistics("data/processed", "data/dataset_stats.json")
+print(f"Statystyki zapisane w: {stats_path}")
+```
+
 ### Pobieranie + preprocessing 200 utworów jedną komendą (`scripts/build_dataset.py`)
 
 Najwygodniejszy sposób na zbudowanie zbioru danych z jednego słowa kluczowego

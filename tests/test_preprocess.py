@@ -1,12 +1,20 @@
 """Unit tests for preprocessing.preprocess."""
 
+import json
+
 import numpy as np
 import pytest
 import soundfile as sf
 
 librosa = pytest.importorskip("librosa")
 
-from preprocessing.preprocess import preprocess_directory, preprocess_file
+from preprocessing.preprocess import (
+    compute_npy_statistics,
+    generate_dataset_statistics,
+    preprocess_directory,
+    preprocess_file,
+    save_statistics,
+)
 
 
 def _make_sine_wave(duration_s: float = 0.5, sr: int = 22050, freq: float = 440.0) -> np.ndarray:
@@ -60,3 +68,60 @@ def test_preprocess_directory_raises_when_no_audio_files(tmp_path):
 
     with pytest.raises(FileNotFoundError):
         preprocess_directory(str(empty_dir), str(tmp_path / "processed"))
+
+
+def test_compute_npy_statistics_basic_shape(tmp_path):
+    processed_dir = tmp_path / "processed"
+    processed_dir.mkdir()
+
+    mel_a = np.random.randn(80, 50).astype(np.float32)
+    mel_b = np.random.randn(80, 30).astype(np.float32)
+    np.save(processed_dir / "a.npy", mel_a)
+    np.save(processed_dir / "b.npy", mel_b)
+
+    stats = compute_npy_statistics(str(processed_dir))
+
+    assert stats["num_files"] == 2
+    assert stats["n_mels"] == 80
+    assert stats["total_frames"] == 80  # 50 + 30
+    assert stats["frames_per_file"]["min"] == 30
+    assert stats["frames_per_file"]["max"] == 50
+    assert "mean" in stats["value_stats"]
+    assert "std" in stats["value_stats"]
+    assert len(stats["files"]) == 2
+    assert {f["file"] for f in stats["files"]} == {"a.npy", "b.npy"}
+
+
+def test_compute_npy_statistics_raises_when_no_npy_files(tmp_path):
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+
+    with pytest.raises(FileNotFoundError):
+        compute_npy_statistics(str(empty_dir))
+
+
+def test_save_statistics_writes_valid_json(tmp_path):
+    stats = {"num_files": 3, "value_stats": {"mean": 1.0}}
+    output_path = tmp_path / "stats" / "dataset_stats.json"
+
+    result_path = save_statistics(stats, str(output_path))
+
+    assert result_path == str(output_path)
+    with open(output_path, "r", encoding="utf-8") as f:
+        loaded = json.load(f)
+    assert loaded == stats
+
+
+def test_generate_dataset_statistics_end_to_end(tmp_path):
+    processed_dir = tmp_path / "processed"
+    processed_dir.mkdir()
+    np.save(processed_dir / "x.npy", np.random.randn(80, 40).astype(np.float32))
+
+    output_path = tmp_path / "dataset_stats.json"
+    result_path = generate_dataset_statistics(str(processed_dir), str(output_path))
+
+    assert result_path == str(output_path)
+    with open(output_path, "r", encoding="utf-8") as f:
+        loaded = json.load(f)
+    assert loaded["num_files"] == 1
+    assert loaded["n_mels"] == 80
