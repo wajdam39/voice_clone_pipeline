@@ -6,7 +6,7 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from models.dataset import SegmentedVoiceDataset, VoiceDataset
-from models.model import VoiceCloneModel
+from models.model import DiffusionUNet, VoiceCloneModel
 
 
 def test_voice_clone_model_forward_shape():
@@ -83,3 +83,22 @@ def test_segmented_voice_dataset_is_batchable_without_custom_collate(tmp_path):
 def test_segmented_voice_dataset_raises_on_empty_file_list():
     with pytest.raises(ValueError):
         SegmentedVoiceDataset([], segment_length=512, hop=256)
+
+
+def test_diffusion_unet_forward_shape():
+    model = DiffusionUNet(
+        n_mels=16,
+        segment_length=32,
+        base_channels=4,
+        channel_multipliers=(1, 2, 4),
+        time_emb_dim=16,
+        num_res_blocks=1,
+    )
+
+    batch_size = 2
+    x = torch.randn(batch_size, 1, 16, 32)
+    t = torch.randint(0, 1000, (batch_size,))
+
+    output = model(x, t)
+
+    assert output.shape == x.shape

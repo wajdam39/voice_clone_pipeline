@@ -1,4 +1,10 @@
-"""Training entry point for the voice clone acoustic model."""
+"""Training entry point for the voice clone diffusion acoustic model.
+
+Trains a ``DiffusionUNet`` (2D U-Net) to predict the Gaussian noise added to
+mel-spectrogram segments at a randomly sampled diffusion timestep, using
+``GaussianDiffusion`` to drive the forward noising process and the training
+loss (see models/diffusion.py).
+"""
 
 from __future__ import annotations
 
@@ -11,7 +17,8 @@ from typing import Optional
 import yaml
 
 from models.dataset import SegmentedVoiceDataset
-from models.model import VoiceCloneModel
+from models.diffusion import GaussianDiffusion
+from models.model import DiffusionUNet
 
 
 def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
@@ -51,9 +58,10 @@ def train(data_dir: str, config: dict) -> None:
         raise FileNotFoundError(f"No .npy files found in '{data_dir}'.")
 
     segmentation_cfg = config.get("segmentation", {})
+    segment_length = segmentation_cfg.get("segment_length", 512)
     dataset = SegmentedVoiceDataset(
         file_paths,
-        segment_length=segmentation_cfg.get("segment_length", 512),
+        segment_length=segment_length,
         hop=segmentation_cfg.get("hop", 256),
     )
     train_cfg = config.get("train", {})
@@ -61,16 +69,27 @@ def train(data_dir: str, config: dict) -> None:
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     model_cfg = config.get("model", {})
-    model = VoiceCloneModel(
-        hidden_dim=model_cfg.get("hidden_dim", 256),
-        num_layers=model_cfg.get("num_layers", 4),
-        dropout=model_cfg.get("dropout", 0.1),
+    n_mels = model_cfg.get("n_mels") or config.get("preprocessing", {}).get("n_mels", 80)
+    model = DiffusionUNet(
+        n_mels=n_mels,
+        segment_length=segment_length,
+        base_channels=model_cfg.get("base_channels", 32),
+        channel_multipliers=tuple(model_cfg.get("channel_multipliers", [1, 2, 4])),
+        time_emb_dim=model_cfg.get("time_emb_dim", 128),
+        num_res_blocks=model_cfg.get("num_res_blocks", 2),
+    )
+
+    diffusion_cfg = config.get("diffusion", {})
+    diffusion = GaussianDiffusion(
+        model,
+        num_timesteps=diffusion_cfg.get("num_timesteps", 1000),
+        beta_start=diffusion_cfg.get("beta_start", 1e-4),
+        beta_end=diffusion_cfg.get("beta_end", 0.02),
     )
 
     optimizer = torch.optim.Adam(
         model.parameters(), lr=train_cfg.get("learning_rate", 1e-4)
     )
-    criterion = torch.nn.MSELoss()
 
     checkpoint_dir = Path(train_cfg.get("checkpoint_dir", "checkpoints"))
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -80,10 +99,12 @@ def train(data_dir: str, config: dict) -> None:
         model.train()
         epoch_loss = 0.0
         for batch in loader:
-            mel = batch.transpose(1, 2)  # (batch, n_frames, n_mels)
+            # batch: (batch_size, n_mels, segment_length) -> add channel dim
+            # expected by DiffusionUNet: (batch_size, 1, n_mels, segment_length).
+            x_start = batch.unsqueeze(1)
+
             optimizer.zero_grad()
-            output = model(mel)
-            loss = criterion(output, mel)
+            loss = diffusion.training_loss(x_start)
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item()

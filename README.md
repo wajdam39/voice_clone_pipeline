@@ -14,8 +14,11 @@ voice_clone_pipeline/
 │   ├── audio_utils.py
 │   └── spectrogram.py
 ├── models/              # definicja modelu, dataset, trening
-│   ├── dataset.py
-│   ├── model.py
+│   ├── dataset.py        # VoiceDataset, SegmentedVoiceDataset
+│   ├── segmentation.py   # dzielenie spektrogramów na stałe, nakładające się okna
+│   ├── unet.py           # architektura 2D U-Net (DDPM epsilon-prediction)
+│   ├── diffusion.py      # GaussianDiffusion: noise schedule, q_sample, training_loss, sample
+│   ├── model.py           # VoiceCloneModel (legacy), DiffusionUNet
 │   └── train.py
 ├── vocoder/             # synteza fali z mel-spektrogramu
 │   └── vocoder.py
@@ -237,6 +240,77 @@ przetworzonych (i opcjonalnie znormalizowanych) plików `.npy`:
 python -m models.train --data-dir data/processed_normalized --config configs/config.yaml
 ```
 
+### Model dyfuzyjny: 2D U-Net (`models/unet.py`, `models/model.py`, `models/diffusion.py`)
+
+Głównym modelem akustycznym projektu jest **model dyfuzyjny (DDPM)** generujący
+mel-spektrogramy o stałym kształcie `[80, 512]` (dokładnie kształt zwracany
+przez `SegmentedVoiceDataset`).
+
+**1. Architektura `UNet2D` (`models/unet.py`)**
+- Wejście/wyjście: `[batch, 1, n_mels, segment_length]` (domyślnie `[B, 1, 80, 512]`).
+- `SinusoidalPositionEmbeddings` koduje krok dyfuzji `t`, który następnie
+  przechodzi przez 2-warstwowy MLP i jest wstrzykiwany do **każdego** bloku
+  rezydualnego (dodawany do map cech po pierwszej konwolucji).
+- `ResidualBlock`: GroupNorm → SiLU → Conv2d, z projekcją time-embeddingu i
+  połączeniem rezydualnym.
+- Encoder (3 etapy, kanały `[32, 64, 128]` domyślnie) ze stride-2 konwolucjami
+  (`Downsample`) między etapami, bottleneck (2 bloki rezydualne), decoder
+  (`Upsample` + konkatenacja ze skip connection z odpowiadającego etapu encodera).
+- Asymetria wymiarów (80 vs 512) jest obsłużona przez downsamplowanie **obu**
+  wymiarów równocześnie — przy domyślnych 3 etapach kanałów oba wymiary muszą
+  być podzielne przez 4 (80→40→20, 512→256→128), co jest walidowane w konstruktorze.
+
+**2. Harmonogram szumu i proces forward (`models/diffusion.py` — `GaussianDiffusion`)**
+- `linear_beta_schedule` — liniowy harmonogram wariancji szumu `beta_t` od
+  `beta_start=1e-4` do `beta_end=0.02` na przestrzeni `num_timesteps` (domyślnie 1000) kroków.
+- `q_sample(x_start, t, noise=None)` — dodaje szum gaussowski do czystego
+  spektrogramu w zamkniętej formie: `x_t = sqrt(alpha_cumprod_t) * x_0 + sqrt(1 - alpha_cumprod_t) * noise`.
+
+**3. Strata treningowa (`GaussianDiffusion.training_loss`)**
+```python
+def training_loss(self, x_start, t=None):
+    if t is None:
+        t = torch.randint(0, self.num_timesteps, (x_start.shape[0],), device=x_start.device)
+    x_t, noise = self.q_sample(x_start, t)          # dodaj szum w losowym kroku t
+    predicted_noise = self.model(x_t, t)            # U-Net przewiduje szum
+    return F.mse_loss(predicted_noise, noise)        # MSE(szum_prawdziwy, szum_przewidziany)
+```
+Dokładnie to wywołuje `models/train.py` w każdej iteracji pętli treningowej.
+
+**4. Procedura inferencji / generowania (`GaussianDiffusion.sample`)**
+```python
+@torch.no_grad()
+def sample(self, shape=(1, 1, 80, 512), device=None):
+    x = torch.randn(shape, device=device)            # start: czysty szum gaussowski
+    for t in reversed(range(self.num_timesteps)):     # T-1, T-2, ..., 0
+        x = self.p_sample(x, t)                       # jeden krok odszumiania
+    return x                                           # wygenerowany spektrogram
+```
+
+**Przykład użycia (trening i generowanie):**
+```python
+from models.model import DiffusionUNet
+from models.diffusion import GaussianDiffusion
+import torch
+
+model = DiffusionUNet(n_mels=80, segment_length=512)
+diffusion = GaussianDiffusion(model, num_timesteps=1000)
+
+# --- Trening (jeden krok) ---
+x_start = torch.randn(16, 1, 80, 512)   # batch znormalizowanych spektrogramów
+loss = diffusion.training_loss(x_start)  # MSE(szum, szum_przewidziany)
+loss.backward()
+
+# --- Generowanie nowego spektrogramu ---
+generated = diffusion.sample(shape=(1, 1, 80, 512))  # [1, 1, 80, 512]
+```
+
+**Uruchomienie treningu** (automatycznie korzysta z `DiffusionUNet` + `GaussianDiffusion`,
+parametry z sekcji `model`/`diffusion` w `configs/config.yaml`):
+```bash
+python -m models.train --data-dir data/processed_normalized --config configs/config.yaml
+```
+
 ### Statystyki zbioru danych (`compute_npy_statistics` / `generate_dataset_statistics`)
 
 Po przetworzeniu audio na mel-spektrogramy (`data/processed/*.npy`) możesz
@@ -347,9 +421,9 @@ python -m downloader.youtube_downloader "fraza" --output-dir data/raw --format m
 
 ## Roadmapa
 
-- [ ] Implementacja `youtube_downloader.py` (yt-dlp)
-- [ ] Implementacja preprocessing audio + mel-spektrogramów
-- [ ] Zdefiniowanie architektury modelu akustycznego
-- [ ] Pętla treningowa (`train.py`)
+- [x] Implementacja `youtube_downloader.py` (yt-dlp)
+- [x] Implementacja preprocessing audio + mel-spektrogramów
+- [x] Zdefiniowanie architektury modelu akustycznego (2D U-Net + dyfuzja DDPM)
+- [x] Pętla treningowa (`train.py`)
 - [ ] Integracja wokodera (np. HiFi-GAN)
-- [ ] Rozszerzenie testów jednostkowych
+- [x] Rozszerzenie testów jednostkowych
