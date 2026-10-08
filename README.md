@@ -21,7 +21,8 @@ voice_clone_pipeline/
 │   ├── model.py           # VoiceCloneModel (legacy), DiffusionUNet
 │   └── train.py
 ├── vocoder/             # synteza fali z mel-spektrogramu
-│   └── vocoder.py
+│   ├── vocoder.py        # Griffin-Lim (fallback, bez trenowania)
+│   └── hifigan.py        # pretrenowany HiFi-GAN (SpeechBrain / Hugging Face Hub)
 ├── tests/               # testy jednostkowe (pytest), 1:1 z modułami
 ├── configs/
 │   └── config.yaml       # hiperparametry i ścieżki
@@ -61,6 +62,90 @@ waveform, sr = load_audio(audio_path)
 waveform = normalize_audio(waveform)
 mel = audio_to_melspectrogram(waveform, sr)
 reconstructed = melspectrogram_to_audio(mel, sr)
+```
+
+### Pretrenowany wokoder: HiFi-GAN (`vocoder/hifigan.py`)
+
+Oprócz wbudowanego Griffin-Lima (`vocoder/vocoder.py`, nie wymaga żadnych
+pretrenowanych wag, ale daje słabszą jakość), projekt integruje **gotowy,
+wstępnie wytrenowany wokoder HiFi-GAN** — nie trzeba go trenować od zera.
+
+**Skąd pochodzi model:** `speechbrain/tts-hifigan-ljspeech` z Hugging Face
+Hub, wczytywany przez bibliotekę `speechbrain` (`pip install speechbrain`,
+już w `requirements.txt`). Przy pierwszym uruchomieniu checkpoint pobiera się
+automatycznie i jest cache'owany lokalnie w `pretrained_models/` (katalog
+ignorowany przez Git). Ten konkretny checkpoint został wybrany, bo mel-spektrogram,
+na którym był trenowany, **dokładnie odpowiada** recepturze używanej w tym
+projekcie (`preprocessing.spectrogram.audio_to_melspectrogram`): `sample_rate=22050,
+n_fft=1024, hop_length=256, win_length=1024, n_mels=80, fmin=0, fmax=8000`,
+skala logarytmu naturalnego z podłogą `1e-5`.
+
+**1. Wczytanie modelu:**
+```python
+from vocoder.hifigan import load_pretrained_vocoder
+
+vocoder = load_pretrained_vocoder()  # pobiera/cache'uje przy pierwszym użyciu
+```
+
+**2. Inferencja — konwersja spektrogramu na falę audio:**
+```python
+from vocoder.hifigan import mel_to_audio
+import numpy as np
+
+mel = np.random.randn(80, 512).astype(np.float32)  # [80, 512] albo [B, 80, T] / [B, 1, 80, T]
+audio = mel_to_audio(vocoder, mel)  # numpy array: (num_samples,) albo (B, num_samples)
+```
+`mel_to_audio` automatycznie dopasowuje wymiary wejścia — akceptuje pojedynczy
+spektrogram `[80, 512]`, batch `[B, 80, T]`, lub batch z wymiarem kanału
+`[B, 1, 80, T]` (dokładnie taki, jaki zwraca `DiffusionUNet`/`GaussianDiffusion.sample`).
+
+**3. Dopasowanie wymiarów i denormalizacja (WAŻNE — inaczej dźwięk będzie zniekształcony):**
+
+Model dyfuzyjny generuje/trenuje się na **znormalizowanych** spektrogramach
+(`GaussianDiffusion.sample` zwraca wartości w okolicach zakresu normalizacji,
+np. mean≈0/std≈1 dla `zscore`), a wokoder oczekuje **oryginalnej skali
+logarytmu naturalnego** mel-energii (tej samej, jaką zwraca
+`audio_to_melspectrogram` — **to nie jest skala dB**, tylko `ln(mel_energy)`
+z podłogą `1e-5`. Podanie do wokodera spektrogramu wciąż będącego w skali
+znormalizowanej (np. wartości bliskie 0) zostanie zinterpretowane jako
+`ln(energia) ≈ 0`, czyli energia `e^0 = 1` — realnie bardzo głośny sygnał w
+każdym paśmie — co prowadzi do ostrego przesterowania/zniekształcenia dźwięku.
+
+Dlatego przed syntezą trzeba **odwrócić dokładnie tę samą normalizację**,
+która została zastosowana przed treningiem, używając **tych samych**
+zapisanych statystyk (`data/normalization_stats.json`, patrz sekcja o
+normalizacji globalnej wyżej):
+
+```python
+from preprocessing.preprocess import load_normalization_stats
+from preprocessing.spectrogram import denormalize_melspectrogram_with_stats
+from vocoder.hifigan import load_pretrained_vocoder, mel_to_audio
+
+stats = load_normalization_stats("data/normalization_stats.json")
+denormalized_mel = denormalize_melspectrogram_with_stats(generated_mel, stats)
+
+vocoder = load_pretrained_vocoder()
+audio = mel_to_audio(vocoder, denormalized_mel)
+```
+
+Albo jednym wywołaniem (`normalized_mel_to_audio` łączy oba kroki):
+```python
+from vocoder.hifigan import load_pretrained_vocoder, normalized_mel_to_audio
+from preprocessing.preprocess import load_normalization_stats
+
+stats = load_normalization_stats("data/normalization_stats.json")
+vocoder = load_pretrained_vocoder()
+audio = normalized_mel_to_audio(vocoder, generated_mel, stats)  # denormalizacja + synteza
+```
+
+Wzory denormalizacji (dokładna odwrotność `normalize_melspectrogram_with_stats`):
+- `zscore`: `mel = normalized * (std + eps) + mean`
+- `minmax`: `mel = normalized * (max - min + eps) + min`
+
+**Zapisanie wygenerowanego audio do pliku:**
+```python
+import soundfile as sf
+sf.write("output.wav", audio, samplerate=22050)
 ```
 
 ### `load_audio` i katalog `data/raw`
@@ -469,5 +554,5 @@ python -m downloader.youtube_downloader "fraza" --output-dir data/raw --format m
 - [x] Implementacja preprocessing audio + mel-spektrogramów
 - [x] Zdefiniowanie architektury modelu akustycznego (2D U-Net + dyfuzja DDPM)
 - [x] Pętla treningowa (`train.py`)
-- [ ] Integracja wokodera (np. HiFi-GAN)
+- [x] Integracja wokodera (pretrenowany HiFi-GAN, `vocoder/hifigan.py`)
 - [x] Rozszerzenie testów jednostkowych

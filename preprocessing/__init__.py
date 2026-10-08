@@ -24,6 +24,7 @@ from .preprocess import (
 )
 from .spectrogram import (
     audio_to_melspectrogram,
+    denormalize_melspectrogram_with_stats,
     normalize_melspectrogram,
     normalize_melspectrogram_with_stats,
 )
@@ -41,6 +42,7 @@ __all__ = [
     "audio_to_melspectrogram",
     "normalize_melspectrogram",
     "normalize_melspectrogram_with_stats",
+    "denormalize_melspectrogram_with_stats",
     "preprocess_file",
     "preprocess_directory",
     "normalize_npy_directory",

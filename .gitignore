@@ -26,6 +26,7 @@ logs/
 wandb/
 data/raw/
 data/processed/
+pretrained_models/
 *.wav
 *.mp3
 *.flac
