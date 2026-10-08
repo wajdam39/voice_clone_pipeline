@@ -29,12 +29,17 @@ from preprocessing.audio_utils import (
     normalize_audio,
     resample_audio,
 )
-from preprocessing.spectrogram import audio_to_melspectrogram, normalize_melspectrogram
+from preprocessing.spectrogram import (
+    audio_to_melspectrogram,
+    normalize_melspectrogram,
+    normalize_melspectrogram_with_stats,
+)
 
 DEFAULT_PROCESSED_DIR = "data/processed"
 DEFAULT_NORMALIZED_DIR = "data/processed_normalized"
 DEFAULT_CONFIG_PATH = "configs/config.yaml"
 DEFAULT_STATS_PATH = "data/dataset_stats.json"
+DEFAULT_NORM_STATS_PATH = "data/normalization_stats.json"
 
 
 def safe_print(message: str) -> None:
@@ -151,18 +156,70 @@ def preprocess_directory(
     ]
 
 
+def compute_global_mel_stats(
+    processed_dir: str = DEFAULT_PROCESSED_DIR,
+    method: str = "zscore",
+) -> Dict:
+    """Compute a single, dataset-wide set of normalization statistics.
+
+    Unlike per-file normalization (each file uses its own mean/std), this
+    computes one fixed statistic over *all* ``.npy`` files in
+    ``processed_dir`` combined. Applying the same fixed statistics to every
+    file (and to every segment cut out of a file) means normalization
+    *commutes* with segmentation: normalizing a full track and then slicing
+    a fixed-size window out of it is identical to slicing first and
+    normalizing the slice with the same stats. This makes global
+    normalization the correct choice when segmentation
+    (``models.segmentation``/``SegmentedVoiceDataset``) happens as a later
+    pipeline step.
+
+    Args:
+        processed_dir: Directory containing ``.npy`` mel-spectrogram files.
+        method: ``"zscore"`` (mean/std) or ``"minmax"`` (min/max).
+
+    Returns:
+        A dict: ``{"method": "zscore", "mean": float, "std": float}`` or
+        ``{"method": "minmax", "min": float, "max": float}``.
+
+    Raises:
+        ValueError: If ``method`` is not ``"zscore"`` or ``"minmax"``.
+        FileNotFoundError: If ``processed_dir`` contains no ``.npy`` files.
+    """
+    if method not in ("zscore", "minmax"):
+        raise ValueError(f"Unknown normalization method: '{method}'. Use 'zscore' or 'minmax'.")
+
+    value_stats = compute_npy_statistics(processed_dir)["value_stats"]
+
+    if method == "zscore":
+        return {"method": "zscore", "mean": value_stats["mean"], "std": value_stats["std"]}
+    return {"method": "minmax", "min": value_stats["min"], "max": value_stats["max"]}
+
+
+def save_normalization_stats(stats: Dict, output_path: str = DEFAULT_NORM_STATS_PATH) -> str:
+    """Save normalization statistics (e.g. from ``compute_global_mel_stats``) as JSON."""
+    out_path = Path(output_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(stats, f, indent=2, ensure_ascii=False)
+
+    return str(out_path)
+
+
+def load_normalization_stats(stats_path: str = DEFAULT_NORM_STATS_PATH) -> Dict:
+    """Load normalization statistics previously saved with ``save_normalization_stats``."""
+    with open(stats_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 def normalize_npy_directory(
     input_dir: str = DEFAULT_PROCESSED_DIR,
     output_dir: str = DEFAULT_NORMALIZED_DIR,
     method: str = "zscore",
+    scope: str = "global",
+    stats_path: str = DEFAULT_NORM_STATS_PATH,
 ) -> List[str]:
-    """Apply local normalization to every ``.npy`` mel-spectrogram in a directory.
-
-    Each spectrogram is normalized independently, using only its own values
-    (see ``preprocessing.spectrogram.normalize_melspectrogram``) — this is
-    *local*/per-file normalization, not dataset-wide normalization. Useful
-    when you already have preprocessed (un-normalized) ``.npy`` files and
-    want to (re-)normalize them without re-running audio preprocessing.
+    """Normalize every ``.npy`` mel-spectrogram in a directory.
 
     Args:
         input_dir: Directory containing raw (un-normalized) ``.npy``
@@ -172,15 +229,29 @@ def normalize_npy_directory(
             ``input_dir`` by default so the original log-mel-spectrograms
             (e.g. needed by a vocoder expecting the original scale) are not
             overwritten.
-        method: Normalization method, forwarded to
-            ``normalize_melspectrogram`` (``"zscore"`` or ``"minmax"``).
+        method: Normalization method: ``"zscore"`` or ``"minmax"``.
+        scope: ``"global"`` (default, recommended when segments will later be
+            cut out of these files, e.g. via ``SegmentedVoiceDataset``):
+            compute one fixed mean/std (or min/max) over the *entire*
+            dataset and apply it identically to every file, so normalization
+            commutes with later segmentation. ``"local"``: normalize each
+            file independently using only its own statistics (legacy
+            behavior; NOT recommended before segmentation, since a segment's
+            true mean/std can differ substantially from its source file's).
+        stats_path: Where to save the computed global statistics JSON, when
+            ``scope="global"`` (so they can be reused/inspected later, e.g.
+            at inference time).
 
     Returns:
         A list of paths to the saved, normalized ``.npy`` files.
 
     Raises:
+        ValueError: If ``scope`` is not ``"global"`` or ``"local"``.
         FileNotFoundError: If no ``.npy`` files are found in ``input_dir``.
     """
+    if scope not in ("global", "local"):
+        raise ValueError(f"Unknown normalization scope: '{scope}'. Use 'global' or 'local'.")
+
     dir_path = Path(input_dir)
     npy_paths = sorted(dir_path.glob("*.npy")) if dir_path.exists() else []
 
@@ -189,10 +260,18 @@ def normalize_npy_directory(
 
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
+    global_stats = None
+    if scope == "global":
+        global_stats = compute_global_mel_stats(input_dir, method=method)
+        save_normalization_stats(global_stats, stats_path)
+
     output_paths = []
     for npy_path in npy_paths:
         mel = np.load(npy_path)
-        normalized = normalize_melspectrogram(mel, method=method)
+        if scope == "global":
+            normalized = normalize_melspectrogram_with_stats(mel, global_stats)
+        else:
+            normalized = normalize_melspectrogram(mel, method=method)
 
         out_path = Path(output_dir) / npy_path.name
         np.save(out_path, normalized)
@@ -385,7 +464,13 @@ def main(argv: Optional[list] = None) -> None:
     parser.add_argument(
         "--normalize",
         action="store_true",
-        help="Apply local (per-file) spectrogram normalization while preprocessing audio.",
+        help="Apply LOCAL (per-file) spectrogram normalization while preprocessing "
+        "audio, in a single pass. NOTE: if you will later cut fixed-size segments "
+        "out of these files (e.g. SegmentedVoiceDataset), prefer the two-step "
+        "workflow instead: run preprocess without --normalize, then run again with "
+        "--normalize-existing (--normalize-scope global, the default), which "
+        "computes one fixed mean/std over the whole dataset so normalization "
+        "commutes with segmentation.",
     )
     parser.add_argument(
         "--normalize-method",
@@ -405,16 +490,38 @@ def main(argv: Optional[list] = None) -> None:
         help=f"Directory to save normalized .npy files into when using "
         f"--normalize-existing (default: {DEFAULT_NORMALIZED_DIR}).",
     )
+    parser.add_argument(
+        "--normalize-scope",
+        choices=["global", "local"],
+        default="global",
+        help="'global' (default, recommended before segmentation): compute one "
+        "fixed mean/std over the whole dataset and apply it to every file, so "
+        "normalization commutes with later fixed-window segmentation. 'local': "
+        "normalize each file independently using only its own statistics.",
+    )
+    parser.add_argument(
+        "--norm-stats-path",
+        default=DEFAULT_NORM_STATS_PATH,
+        help=f"Where to save/read the global normalization statistics JSON "
+        f"(default: {DEFAULT_NORM_STATS_PATH}). Only used with --normalize-scope global.",
+    )
     args = parser.parse_args(argv)
 
     if args.normalize_existing:
         normalized_paths = normalize_npy_directory(
-            args.output_dir, args.normalized_dir, method=args.normalize_method
+            args.output_dir,
+            args.normalized_dir,
+            method=args.normalize_method,
+            scope=args.normalize_scope,
+            stats_path=args.norm_stats_path,
         )
         safe_print(
             f"Znormalizowano {len(normalized_paths)} plik(ów) .npy z '{args.output_dir}' "
-            f"do '{args.normalized_dir}' (metoda: {args.normalize_method})."
+            f"do '{args.normalized_dir}' (metoda: {args.normalize_method}, "
+            f"zakres: {args.normalize_scope})."
         )
+        if args.normalize_scope == "global":
+            safe_print(f"Statystyki globalne zapisane w: {args.norm_stats_path}")
         return
 
     if not args.stats_only:

@@ -96,3 +96,50 @@ def normalize_melspectrogram(
         )
 
     return normalized.astype(np.float32)
+
+
+def normalize_melspectrogram_with_stats(
+    mel: np.ndarray,
+    stats: dict,
+    eps: float = 1e-8,
+) -> np.ndarray:
+    """Normalize a mel-spectrogram using externally supplied (e.g. global) statistics.
+
+    Unlike ``normalize_melspectrogram``, which computes mean/std (or min/max)
+    from ``mel`` itself, this applies a *fixed* set of statistics supplied by
+    the caller. This matters when those statistics were computed once over an
+    entire dataset (global normalization): because the same constant
+    transform is applied everywhere, normalizing a full track and then
+    slicing a fixed-size segment out of it gives an identical result to
+    slicing first and normalizing the segment with the same stats -- i.e.
+    the operation commutes with segmentation/windowing. Per-spectrogram
+    normalization (``normalize_melspectrogram``) does not have this property,
+    since each file's own mean/std would differ from any sub-segment's.
+
+    Args:
+        mel: A 2-D mel-spectrogram array of shape (n_mels, n_frames).
+        stats: A dict describing the fixed statistics to apply. Either
+            ``{"method": "zscore", "mean": float, "std": float}`` or
+            ``{"method": "minmax", "min": float, "max": float}``.
+        eps: Small constant added to the denominator to avoid division by zero.
+
+    Returns:
+        The normalized mel-spectrogram as a float32 array with the same
+        shape as ``mel``.
+
+    Raises:
+        ValueError: If ``stats["method"]`` is not one of ``"zscore"`` or ``"minmax"``.
+    """
+    mel = np.asarray(mel, dtype=np.float32)
+    method = stats.get("method", "zscore")
+
+    if method == "zscore":
+        normalized = (mel - stats["mean"]) / (stats["std"] + eps)
+    elif method == "minmax":
+        normalized = (mel - stats["min"]) / (stats["max"] - stats["min"] + eps)
+    else:
+        raise ValueError(
+            f"Unknown normalization method: '{method}'. Use 'zscore' or 'minmax'."
+        )
+
+    return normalized.astype(np.float32)

@@ -145,42 +145,86 @@ python -m downloader.youtube_downloader "fraza wyszukiwania" --count 200
 Pojedyncze niedostępne/zablokowane filmy są domyślnie pomijane
 (`skip_errors=True`), więc jeden błąd nie przerywa całej serii pobierania.
 
-### Lokalna normalizacja spektrogramów (`normalize_melspectrogram`)
+### Normalizacja spektrogramów: globalna vs lokalna (dlaczego kolejność z segmentacją ma znaczenie)
 
-`preprocessing.spectrogram.normalize_melspectrogram` normalizuje **każdy
-mel-spektrogram osobno**, wyłącznie na podstawie jego własnych statystyk
-(w odróżnieniu od normalizacji globalnej, która liczyłaby statystyki z
-całego zbioru — patrz `compute_npy_statistics`). Dostępne metody:
-- `"zscore"` (domyślna): `(mel - mean) / (std + eps)` — zero średnia, jednostkowe odchylenie.
-- `"minmax"`: przeskalowanie wartości do zakresu `[0, 1]`.
+Pipeline tnie znormalizowane spektrogramy na mniejsze, stałe fragmenty
+(`SegmentedVoiceDataset`, 512 ramek) **po** normalizacji. To rodzi pytanie:
+jeśli normalizacja liczy `mean`/`std` **per cały plik/utwór**, a do sieci
+trafia tylko **wycinek** tego pliku — to wycinek "widzi" statystyki całego
+utworu, a nie swoje własne. Fragment z cichej części głośnego utworu
+może więc mieć realnie inny rozkład wartości niż fragment z cichego utworu,
+mimo że oba formalnie przeszły przez tę samą "normalizację".
 
-**Opcja 1 — normalizuj od razu podczas przetwarzania audio:**
+**Rozwiązanie: normalizacja globalna (zalecana, domyślna).** Liczymy jedną,
+stałą parę `(mean, std)` (lub `(min, max)`) **raz, dla całego zbioru danych**
+(`compute_global_mel_stats`), zapisujemy ją (`data/normalization_stats.json`)
+i stosujemy **tę samą, stałą transformację** do każdego pliku — niezależnie
+od tego, jak głośny jest cały utwór. Dzięki temu normalizacja **komutuje**
+z cięciem na fragmenty: *"znormalizuj cały utwór, potem wytnij fragment"*
+daje dokładnie ten sam wynik co *"wytnij fragment, potem znormalizuj go tymi
+samymi, stałymi liczbami"*. Kolejność przestaje mieć znaczenie.
+
+Normalizacja **lokalna** (per-plik, stare domyślne zachowanie) nie ma tej
+własności — każdy plik dostaje własne `mean`/`std`, więc wycięty z niego
+fragment jest normalizowany liczbami, które nie opisują jego własnych
+statystyk. Zostaje dostępna jako opcja (`scope="local"`), ale **nie jest
+zalecana**, gdy dane trafią potem do `SegmentedVoiceDataset`.
+
+**Komenda (zalecany, dwuetapowy workflow):**
 
 ```bash
-python -m preprocessing.preprocess --normalize
-python -m preprocessing.preprocess --normalize --normalize-method minmax
-```
+# Krok 1: preprocessing audio -> mel-spektrogramy BEZ normalizacji
+python -m preprocessing.preprocess --no-stats
 
-**Opcja 2 — znormalizuj już istniejące pliki `.npy` z `data/processed`**
-(bez ponownego przetwarzania audio; wynik trafia do osobnego katalogu
-`data/processed_normalized`, żeby nie nadpisać oryginalnych log-mel-spektrogramów):
-
-```bash
+# Krok 2: normalizacja globalna istniejących plików .npy
 python -m preprocessing.preprocess --normalize-existing
-python -m preprocessing.preprocess --normalize-existing --normalized-dir data/processed_normalized --normalize-method zscore
 ```
+
+Domyślnie `--normalize-existing` używa `--normalize-scope global` — liczy
+`mean`/`std` raz dla wszystkich plików w `data/processed`, zapisuje je do
+`data/normalization_stats.json` i stosuje identycznie do każdego pliku,
+zapisując wynik w `data/processed_normalized` (oryginały w `data/processed`
+pozostają nietknięte).
+
+Opcje:
+
+```bash
+# Inna metoda normalizacji:
+python -m preprocessing.preprocess --normalize-existing --normalize-method minmax
+
+# Jawne wskazanie zakresu (global jest domyślny i zalecany przed segmentacją):
+python -m preprocessing.preprocess --normalize-existing --normalize-scope global
+
+# Stare zachowanie: normalizacja per-plik (NIE zalecane przed segmentacją):
+python -m preprocessing.preprocess --normalize-existing --normalize-scope local
+
+# Inna ścieżka na zapisane statystyki globalne:
+python -m preprocessing.preprocess --normalize-existing --norm-stats-path data/normalization_stats.json
+```
+
+> Flaga `--normalize` (normalizacja "w locie" podczas pierwszego
+> przetwarzania audio z `data/raw`) wciąż istnieje, ale zawsze działa w
+> trybie lokalnym (per-plik), bo w tym momencie statystyki całego zbioru nie
+> są jeszcze znane. Jeśli docelowo dane trafią do `SegmentedVoiceDataset`,
+> używaj powyższego dwuetapowego workflow z `--normalize-existing` zamiast
+> `--normalize`.
 
 Programistycznie:
 
 ```python
-from preprocessing.spectrogram import normalize_melspectrogram
-from preprocessing.preprocess import normalize_npy_directory
+from preprocessing.preprocess import (
+    compute_global_mel_stats,
+    normalize_npy_directory,
+    load_normalization_stats,
+)
+from preprocessing.spectrogram import normalize_melspectrogram_with_stats
 
-# Pojedynczy spektrogram:
-normalized_mel = normalize_melspectrogram(mel, method="zscore")
-
-# Cały katalog plików .npy naraz:
+# Policz i zastosuj normalizację globalną do całego katalogu naraz:
 output_paths = normalize_npy_directory("data/processed", "data/processed_normalized")
+
+# Albo krok po kroku (np. żeby zastosować te same statystyki przy inferencji):
+stats = compute_global_mel_stats("data/processed")       # {"method": "zscore", "mean": ..., "std": ...}
+normalized_mel = normalize_melspectrogram_with_stats(mel, stats)
 ```
 
 ### Segmentacja spektrogramów na stałe okna (`models.segmentation` / `SegmentedVoiceDataset`)
