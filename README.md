@@ -22,6 +22,10 @@ voice_clone_pipeline/
 │   └── train.py
 ├── vocoder/             # synteza fali z mel-spektrogramu
 │   └── hifigan.py        # pretrenowany HiFi-GAN (SpeechBrain / Hugging Face Hub)
+├── scripts/             # orkiestracja wielu etapów pipeline'u
+│   ├── build_dataset.py  # pobieranie -> preprocessing (2 etapy)
+│   ├── generate.py       # wytrenowany model -> generowanie -> synteza (2 etapy)
+│   └── run_pipeline.py   # CAŁY pipeline jedną komendą (5 etapów)
 ├── tests/               # testy jednostkowe (pytest), 1:1 z modułami
 ├── configs/
 │   └── config.yaml       # hiperparametry i ścieżki
@@ -440,6 +444,66 @@ parametry z sekcji `model`/`diffusion` w `configs/config.yaml`):
 python -m models.train --data-dir data/processed_normalized --config configs/config.yaml
 ```
 
+### Generowanie audio z wytrenowanego modelu (`scripts/generate.py`)
+
+Po zakończonym treningu (checkpoint `.pt` + zapisane statystyki normalizacji)
+jedna komenda generuje nowy spektrogram i syntetyzuje z niego plik `.wav`:
+
+```bash
+python -m scripts.generate --checkpoint checkpoints/model_final.pt --output output/generated.wav
+```
+
+Pod spodem: `models.train.load_trained_model` (odtwarza architekturę z configu
+i wczytuje wagi) → `GaussianDiffusion.sample()` (odszumianie od czystego
+szumu) → `denormalize_melspectrogram_with_stats` (odwrócenie normalizacji
+zapisanymi statystykami) → pretrenowany HiFi-GAN (`mel_to_audio`) → zapis `.wav`.
+
+Opcje: `--num-samples N` (wygeneruj N niezależnych klipów), `--config`,
+`--norm-stats-path`, `--sample-rate`.
+
+### Cały pipeline jedną komendą (`scripts/run_pipeline.py`)
+
+Najważniejsza komenda w projekcie — łączy **wszystkie 5 etapów** w jedno
+wywołanie: **pobieranie → przygotowanie → trenowanie → generowanie → przywracanie**:
+
+```bash
+python -m scripts.run_pipeline "słowo kluczowe" --count 50 --epochs 20
+```
+
+Co robi, krok po kroku:
+1. **Pobieranie** — `search_and_download_many("słowo kluczowe", ..., count=50)` → `data/raw`.
+2. **Przygotowanie** — `preprocess_directory` (audio → mel-spektrogramy) →
+   `normalize_npy_directory(scope="global")` (normalizacja całego zbioru,
+   zgodna z późniejszą segmentacją) → `data/processed_normalized` +
+   `data/normalization_stats.json`.
+3. **Trenowanie** — `models.train.train()` na `SegmentedVoiceDataset` →
+   `checkpoints/model_final.pt`.
+4. **Generowanie** — `GaussianDiffusion.sample()`: nowy spektrogram od czystego szumu.
+5. **Przywracanie** — denormalizacja + synteza pretrenowanym HiFi-GAN → `output/generated.wav`.
+
+> ⚠️ **Uwaga prawna:** etap pobierania może naruszać prawa autorskie, jeśli
+> użyty na chronionej muzyce bez zgody — patrz ostrzeżenie w sekcji o
+> `search_and_download_many` powyżej. Używaj tylko na treściach, do których
+> masz prawa.
+
+**Pomijanie etapów** — przydatne przy iteracyjnej pracy (np. trening bez
+ponownego pobierania, albo samo wygenerowanie nowego audio z już wytrenowanego
+modelu):
+
+```bash
+# Dane już pobrane i przygotowane — od razu trenuj i generuj:
+python -m scripts.run_pipeline "fraza" --skip-download --skip-preprocess --epochs 50
+
+# Model już wytrenowany — wygeneruj tylko nowe audio:
+python -m scripts.run_pipeline "fraza" --skip-download --skip-preprocess --skip-train
+
+# Tylko pobierz i przygotuj dane, bez trenowania/generowania:
+python -m scripts.run_pipeline "fraza" --count 100 --skip-train --skip-generate
+```
+
+Pełna lista opcji: `--raw-dir`, `--processed-dir`, `--normalized-dir`,
+`--norm-stats-path`, `--config`, `--output`, `--format`, `--fail-fast`.
+
 ### Statystyki zbioru danych (`compute_npy_statistics` / `generate_dataset_statistics`)
 
 Po przetworzeniu audio na mel-spektrogramy (`data/processed/*.npy`) możesz
@@ -556,3 +620,4 @@ python -m downloader.youtube_downloader "fraza" --output-dir data/raw --format m
 - [x] Pętla treningowa (`train.py`)
 - [x] Integracja wokodera (pretrenowany HiFi-GAN, `vocoder/hifigan.py`)
 - [x] Rozszerzenie testów jednostkowych
+- [x] Orkiestracja całego pipeline'u jedną komendą (`scripts/run_pipeline.py`)

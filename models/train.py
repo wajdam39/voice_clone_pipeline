@@ -43,33 +43,42 @@ def load_config(config_path: str) -> dict:
         return yaml.safe_load(f)
 
 
-def train(data_dir: str, config: dict) -> None:
-    """Run the training loop.
+def get_model_dims(config: dict) -> tuple:
+    """Resolve ``(n_mels, segment_length)`` from a parsed config dict.
 
     Args:
-        data_dir: Directory containing `.npy` mel-spectrogram files.
         config: Parsed configuration dictionary (see configs/config.yaml).
+
+    Returns:
+        A tuple ``(n_mels, segment_length)``.
     """
-    import torch
-    from torch.utils.data import DataLoader
-
-    file_paths = sorted(glob.glob(os.path.join(data_dir, "*.npy")))
-    if not file_paths:
-        raise FileNotFoundError(f"No .npy files found in '{data_dir}'.")
-
-    segmentation_cfg = config.get("segmentation", {})
-    segment_length = segmentation_cfg.get("segment_length", 512)
-    dataset = SegmentedVoiceDataset(
-        file_paths,
-        segment_length=segment_length,
-        hop=segmentation_cfg.get("hop", 256),
-    )
-    train_cfg = config.get("train", {})
-    batch_size = train_cfg.get("batch_size", 16)
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-
     model_cfg = config.get("model", {})
+    segmentation_cfg = config.get("segmentation", {})
     n_mels = model_cfg.get("n_mels") or config.get("preprocessing", {}).get("n_mels", 80)
+    segment_length = segmentation_cfg.get("segment_length", 512)
+    return n_mels, segment_length
+
+
+def build_diffusion_model(config: dict):
+    """Build a ``(DiffusionUNet, GaussianDiffusion)`` pair from a config dict.
+
+    Centralizes model/diffusion construction so it can be reused both for
+    training (this module) and for standalone generation/inference (e.g.
+    ``scripts.generate``) without duplicating hyperparameter wiring.
+
+    Args:
+        config: Parsed configuration dictionary (see configs/config.yaml),
+            using its ``model``, ``diffusion``, ``segmentation`` and
+            ``preprocessing`` sections.
+
+    Returns:
+        A tuple ``(model, diffusion)``: an untrained (randomly initialized)
+        ``DiffusionUNet`` and a ``GaussianDiffusion`` wrapping it.
+    """
+    model_cfg = config.get("model", {})
+    diffusion_cfg = config.get("diffusion", {})
+    n_mels, segment_length = get_model_dims(config)
+
     model = DiffusionUNet(
         n_mels=n_mels,
         segment_length=segment_length,
@@ -79,13 +88,74 @@ def train(data_dir: str, config: dict) -> None:
         num_res_blocks=model_cfg.get("num_res_blocks", 2),
     )
 
-    diffusion_cfg = config.get("diffusion", {})
     diffusion = GaussianDiffusion(
         model,
         num_timesteps=diffusion_cfg.get("num_timesteps", 1000),
         beta_start=diffusion_cfg.get("beta_start", 1e-4),
         beta_end=diffusion_cfg.get("beta_end", 0.02),
     )
+
+    return model, diffusion
+
+
+def load_trained_model(checkpoint_path: str, config: dict, device: Optional[str] = None):
+    """Build a ``(DiffusionUNet, GaussianDiffusion)`` pair and load trained weights.
+
+    Args:
+        checkpoint_path: Path to a ``.pt`` file saved by ``train()``
+            (``model.state_dict()``).
+        config: Parsed configuration dictionary matching the one used for
+            training (architecture hyperparameters must match).
+        device: Device to load the model onto, e.g. "cpu" or "cuda". Defaults
+            to "cuda" if available, else "cpu".
+
+    Returns:
+        A tuple ``(model, diffusion)`` with trained weights loaded, in eval mode.
+    """
+    import torch
+
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    model, diffusion = build_diffusion_model(config)
+    state_dict = torch.load(checkpoint_path, map_location=device)
+    model.load_state_dict(state_dict)
+    model.to(device)
+    model.eval()
+    return model, diffusion
+
+
+def train(data_dir: str, config: dict):
+    """Run the training loop.
+
+    Args:
+        data_dir: Directory containing `.npy` mel-spectrogram files.
+        config: Parsed configuration dictionary (see configs/config.yaml).
+
+    Returns:
+        The trained ``DiffusionUNet`` model (in eval mode), so callers (e.g.
+        ``scripts.run_pipeline``) can immediately use it for generation
+        without reloading from disk.
+    """
+    import torch
+    from torch.utils.data import DataLoader
+
+    file_paths = sorted(glob.glob(os.path.join(data_dir, "*.npy")))
+    if not file_paths:
+        raise FileNotFoundError(f"No .npy files found in '{data_dir}'.")
+
+    segmentation_cfg = config.get("segmentation", {})
+    _, segment_length = get_model_dims(config)
+    dataset = SegmentedVoiceDataset(
+        file_paths,
+        segment_length=segment_length,
+        hop=segmentation_cfg.get("hop", 256),
+    )
+    train_cfg = config.get("train", {})
+    batch_size = train_cfg.get("batch_size", 16)
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+    model, diffusion = build_diffusion_model(config)
 
     optimizer = torch.optim.Adam(
         model.parameters(), lr=train_cfg.get("learning_rate", 1e-4)
@@ -113,6 +183,13 @@ def train(data_dir: str, config: dict) -> None:
         print(f"Epoch {epoch + 1}/{num_epochs} - loss: {avg_loss:.4f}")
 
         torch.save(model.state_dict(), checkpoint_dir / f"model_epoch{epoch + 1}.pt")
+
+    final_checkpoint_path = checkpoint_dir / "model_final.pt"
+    torch.save(model.state_dict(), final_checkpoint_path)
+    print(f"Zapisano finalny checkpoint: {final_checkpoint_path}")
+
+    model.eval()
+    return model
 
 
 def main(argv: Optional[list] = None) -> None:
