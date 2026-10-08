@@ -1,8 +1,8 @@
 """Models package: dataset, model architecture, diffusion process and training loop."""
 
-from .dataset import SegmentedVoiceDataset, VoiceDataset
+from .dataset import SegmentedVoiceDataset
 from .diffusion import GaussianDiffusion, linear_beta_schedule
-from .model import DiffusionUNet, VoiceCloneModel
+from .model import DiffusionUNet
 from .segmentation import (
     DEFAULT_SEGMENT_HOP,
     DEFAULT_SEGMENT_LENGTH,
@@ -15,9 +15,7 @@ from .segmentation import (
 from .unet import UNet2D
 
 __all__ = [
-    "VoiceDataset",
     "SegmentedVoiceDataset",
-    "VoiceCloneModel",
     "DiffusionUNet",
     "UNet2D",
     "GaussianDiffusion",

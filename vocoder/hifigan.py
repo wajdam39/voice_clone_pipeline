@@ -1,8 +1,7 @@
 """Pretrained neural vocoder (HiFi-GAN) for mel-spectrogram-to-audio synthesis.
 
 Wraps a pretrained HiFi-GAN checkpoint (via SpeechBrain, loaded from the
-Hugging Face Hub) so it can be used as a drop-in, high-quality replacement
-for the Griffin-Lim-based ``vocoder.vocoder.melspectrogram_to_audio``. No
+Hugging Face Hub) for high-quality mel-spectrogram-to-audio synthesis. No
 training is required: the checkpoint is downloaded once and cached locally.
 
 Why HiFi-GAN / why this specific checkpoint:

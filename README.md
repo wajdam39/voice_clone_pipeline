@@ -14,14 +14,13 @@ voice_clone_pipeline/
 │   ├── audio_utils.py
 │   └── spectrogram.py
 ├── models/              # definicja modelu, dataset, trening
-│   ├── dataset.py        # VoiceDataset, SegmentedVoiceDataset
+│   ├── dataset.py        # SegmentedVoiceDataset
 │   ├── segmentation.py   # dzielenie spektrogramów na stałe, nakładające się okna
 │   ├── unet.py           # architektura 2D U-Net (DDPM epsilon-prediction)
 │   ├── diffusion.py      # GaussianDiffusion: noise schedule, q_sample, training_loss, sample
-│   ├── model.py           # VoiceCloneModel (legacy), DiffusionUNet
+│   ├── model.py           # DiffusionUNet
 │   └── train.py
 ├── vocoder/             # synteza fali z mel-spektrogramu
-│   ├── vocoder.py        # Griffin-Lim (fallback, bez trenowania)
 │   └── hifigan.py        # pretrenowany HiFi-GAN (SpeechBrain / Hugging Face Hub)
 ├── tests/               # testy jednostkowe (pytest), 1:1 z modułami
 ├── configs/
@@ -50,7 +49,7 @@ pytest
 from downloader.youtube_downloader import download_audio, search_and_download_audio
 from preprocessing.audio_utils import load_audio, normalize_audio
 from preprocessing.spectrogram import audio_to_melspectrogram
-from vocoder.vocoder import melspectrogram_to_audio
+from vocoder.hifigan import load_pretrained_vocoder, mel_to_audio
 
 # Pobieranie po bezpośrednim linku:
 audio_path = download_audio("https://www.youtube.com/watch?v=...", "data/raw")
@@ -61,14 +60,15 @@ audio_path = search_and_download_audio("Artysta - Tytuł utworu", "data/raw")
 waveform, sr = load_audio(audio_path)
 waveform = normalize_audio(waveform)
 mel = audio_to_melspectrogram(waveform, sr)
-reconstructed = melspectrogram_to_audio(mel, sr)
+
+vocoder = load_pretrained_vocoder()
+reconstructed = mel_to_audio(vocoder, mel)
 ```
 
 ### Pretrenowany wokoder: HiFi-GAN (`vocoder/hifigan.py`)
 
-Oprócz wbudowanego Griffin-Lima (`vocoder/vocoder.py`, nie wymaga żadnych
-pretrenowanych wag, ale daje słabszą jakość), projekt integruje **gotowy,
-wstępnie wytrenowany wokoder HiFi-GAN** — nie trzeba go trenować od zera.
+Projekt integruje **gotowy, wstępnie wytrenowany wokoder HiFi-GAN** — nie
+trzeba go trenować od zera.
 
 **Skąd pochodzi model:** `speechbrain/tts-hifigan-ljspeech` z Hugging Face
 Hub, wczytywany przez bibliotekę `speechbrain` (`pip install speechbrain`,

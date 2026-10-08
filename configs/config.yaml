@@ -17,9 +17,6 @@ segmentation:
   hop: 256
 
 model:
-  hidden_dim: 256
-  num_layers: 4
-  dropout: 0.1
   base_channels: 32
   channel_multipliers: [1, 2, 4]
   time_emb_dim: 128

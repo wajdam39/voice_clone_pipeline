@@ -3,7 +3,7 @@
 Scans a directory of raw audio files (e.g. downloaded via
 ``downloader.youtube_downloader``), converts each one into a log-mel
 spectrogram, and saves the result as a ``.npy`` file ready to be consumed by
-``models.dataset.VoiceDataset`` / ``models.train``.
+``models.dataset.SegmentedVoiceDataset`` / ``models.train``.
 
 Run it as a script, e.g.::
 

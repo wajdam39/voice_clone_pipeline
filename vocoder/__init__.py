@@ -1,4 +1,5 @@
-"""Vocoder package: converts mel-spectrograms back into audio waveforms."""
+"""Vocoder package: converts mel-spectrograms back into audio waveforms
+using a pretrained HiFi-GAN (see ``vocoder.hifigan``)."""
 
 from .hifigan import (
     DEFAULT_SAVEDIR,
@@ -7,10 +8,8 @@ from .hifigan import (
     mel_to_audio,
     normalized_mel_to_audio,
 )
-from .vocoder import melspectrogram_to_audio
 
 __all__ = [
-    "melspectrogram_to_audio",
     "load_pretrained_vocoder",
     "mel_to_audio",
     "normalized_mel_to_audio",
