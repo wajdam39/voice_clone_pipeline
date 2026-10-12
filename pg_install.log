@@ -1,0 +1,7 @@
+Found PostgreSQL 17 [PostgreSQL.PostgreSQL.17] Version 17.11-5
+This application is licensed to you by its owner.
+Microsoft is not responsible for, nor does it grant any licenses to, third-party packages.
+Downloading https://get.enterprisedb.com/postgresql/postgresql-17.11-5-windows-x64.exe
+An unexpected error occurred while executing the command: 
+Download request status is not success.
+0x80190193 : Forbidden (403).
