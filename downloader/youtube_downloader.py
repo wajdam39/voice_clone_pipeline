@@ -200,29 +200,43 @@ def search_and_download_many(
     fetch_count = max(count * 2, count + 10)
     search_term = f"ytsearch{fetch_count}:{query.strip()}"
 
+    # IMPORTANT: use a *flat* extraction for the search step. Without
+    # `extract_flat`, yt-dlp eagerly resolves every search result in full,
+    # including recursively expanding any channel/playlist entry into all of
+    # its individual videos *before even returning the search results list*.
+    # That defeats any later filtering (the expanded videos look like normal
+    # "Youtube" entries) and can hang for a long time or silently download
+    # far more than `count` tracks. `extract_flat="in_playlist"` keeps each
+    # search result as a lightweight reference (with an accurate `ie_key`)
+    # without expanding containers, so channels/playlists can be filtered out
+    # below before anything is downloaded.
+    search_opts = dict(ydl_opts)
+    search_opts["extract_flat"] = "in_playlist"
+
     downloaded_paths: List[str] = []
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    with yt_dlp.YoutubeDL(search_opts) as search_ydl:
         # First, resolve the search results WITHOUT downloading, so a single
         # broken entry can't abort metadata extraction for the whole batch.
-        search_info = ydl.extract_info(search_term, download=False)
+        search_info = search_ydl.extract_info(search_term, download=False)
         all_entries = list(search_info.get("entries") or [])
 
-        # Keep only entries that look like single, directly downloadable
-        # videos. Entries whose ie_key/_type indicate a channel, playlist, or
-        # other container (e.g. "YoutubeTab") are skipped here -- passing
-        # such a URL to extract_info(download=True) would recursively
-        # download many/all videos from that channel/playlist, blowing past
-        # the requested ``count`` with no predictable stopping point.
-        video_entries = [
-            entry
-            for entry in all_entries
-            if entry and entry.get("ie_key", "Youtube") == "Youtube"
-        ]
+    # Keep only entries that look like single, directly downloadable videos.
+    # Entries whose ie_key/_type indicate a channel, playlist, or other
+    # container (e.g. "YoutubeTab") are skipped here -- passing such a URL to
+    # extract_info(download=True) would recursively download many/all videos
+    # from that channel/playlist, blowing past the requested ``count`` with
+    # no predictable stopping point.
+    video_entries = [
+        entry
+        for entry in all_entries
+        if entry and entry.get("ie_key", "Youtube") == "Youtube"
+    ]
 
-        if not video_entries:
-            raise RuntimeError(f"No YouTube results found for query: '{query}'")
+    if not video_entries:
+        raise RuntimeError(f"No YouTube results found for query: '{query}'")
 
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         for entry in video_entries:
             # Hard cap: stop as soon as we have exactly `count` successful
             # downloads, regardless of how many candidate entries remain.
