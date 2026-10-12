@@ -36,7 +36,10 @@ from typing import Optional
 
 import yaml
 
-from downloader.youtube_downloader import search_and_download_many
+from downloader.youtube_downloader import (
+    DEFAULT_MAX_VIDEO_DURATION_SECONDS,
+    search_and_download_many,
+)
 from models.train import load_config, train
 from preprocessing.audio_utils import DEFAULT_RAW_AUDIO_DIR
 from preprocessing.preprocess import (
@@ -71,6 +74,7 @@ def run_pipeline(
     skip_generate: bool = False,
     skip_errors: bool = True,
     num_epochs_override: Optional[int] = None,
+    max_duration_seconds: Optional[int] = DEFAULT_MAX_VIDEO_DURATION_SECONDS,
 ) -> Optional[list]:
     """Run the full pipeline: download -> preprocess -> train -> generate -> restore.
 
@@ -101,6 +105,8 @@ def run_pipeline(
             entirely, stopping right after training.
         skip_errors: Whether to skip individual download failures instead of
             aborting the whole batch (download stage only).
+        max_duration_seconds: Skip videos longer than this many seconds
+            (default: 2 hours). Pass ``None`` to disable the limit.
 
     Returns:
         A list with the path to the generated ``.wav`` file (or multiple, if
@@ -113,7 +119,12 @@ def run_pipeline(
     if not skip_download:
         safe_print(f"[1/5] Wyszukiwanie i pobieranie do {count} utwor\u00f3w dla: '{query}'...")
         downloaded_paths = search_and_download_many(
-            query, raw_dir, count=count, audio_format=audio_format, skip_errors=skip_errors
+            query,
+            raw_dir,
+            count=count,
+            audio_format=audio_format,
+            skip_errors=skip_errors,
+            max_duration_seconds=max_duration_seconds,
         )
         safe_print(f"[1/5] Pobrano {len(downloaded_paths)}/{count} plik(ów) do '{raw_dir}'.")
     else:
@@ -145,16 +156,16 @@ def run_pipeline(
 
     # ---- Stage 3: Trenowanie (train) ----
     train_cfg = config.get("train", {})
-    print(f"[3/5] Trenowanie modelu z configu '{config_path}'...")
+    safe_print(f"[3/5] Trenowanie modelu z configu '{config_path}'...")
     checkpoint_dir = Path(train_cfg.get("checkpoint_dir", "checkpoints"))
-    print(f"[3/5] Checkpointy modelu zostaną zapisane w: {checkpoint_dir}")
+    safe_print(f"[3/5] Checkpointy modelu zostaną zapisane w: {checkpoint_dir}")
     final_checkpoint_path = checkpoint_dir / "model_final.pt"
-    print(f"[3/5] Finalny checkpoint modelu zostanie zapisany w: {final_checkpoint_path}")
+    safe_print(f"[3/5] Finalny checkpoint modelu zostanie zapisany w: {final_checkpoint_path}")
 
     if not skip_train:
         safe_print(f"[3/5] Trenowanie modelu na '{normalized_dir}'...")
         train_config = load_config(config_path)
-        print(f"[3/5] Wczytano config treningu: {train_config}")
+        safe_print(f"[3/5] Wczytano config treningu: {train_config}")
         if num_epochs_override is not None:
             train_config.setdefault("train", {})["num_epochs"] = num_epochs_override
         train(normalized_dir, train_config)
@@ -254,7 +265,16 @@ def main(argv: Optional[list] = None) -> None:
         action="store_true",
         help="Abort the whole download batch on the first error instead of skipping it.",
     )
+    parser.add_argument(
+        "--max-duration",
+        type=int,
+        default=DEFAULT_MAX_VIDEO_DURATION_SECONDS,
+        help="Skip videos longer than this many seconds (default: 7200 = 2 hours). "
+        "Use 0 or a negative value to disable the limit.",
+    )
     args = parser.parse_args(argv)
+
+    max_duration_seconds = args.max_duration if args.max_duration and args.max_duration > 0 else None
 
     run_pipeline(
         query=args.query,
@@ -272,6 +292,7 @@ def main(argv: Optional[list] = None) -> None:
         skip_generate=args.skip_generate,
         skip_errors=not args.fail_fast,
         num_epochs_override=args.epochs,
+        max_duration_seconds=max_duration_seconds,
     )
 
 

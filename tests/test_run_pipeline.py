@@ -43,7 +43,9 @@ def test_run_pipeline_executes_all_stages_in_order(tmp_path):
 
     call_order = []
 
-    def fake_search_and_download_many(query, output_dir, count, audio_format, skip_errors=True):
+    def fake_search_and_download_many(
+        query, output_dir, count, audio_format, skip_errors=True, max_duration_seconds=None
+    ):
         call_order.append("download")
         raw_dir.mkdir(parents=True, exist_ok=True)
         paths = []

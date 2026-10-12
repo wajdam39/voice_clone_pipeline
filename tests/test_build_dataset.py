@@ -22,7 +22,9 @@ def test_build_dataset_downloads_then_preprocesses(tmp_path):
     processed_dir = tmp_path / "processed"
     sr = 22050
 
-    def fake_search_and_download_many(query, output_dir, count, audio_format, skip_errors=True):
+    def fake_search_and_download_many(
+        query, output_dir, count, audio_format, skip_errors=True, max_duration_seconds=None
+    ):
         out = []
         raw_dir.mkdir(parents=True, exist_ok=True)
         for i in range(count):

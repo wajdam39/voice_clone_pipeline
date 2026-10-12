@@ -19,6 +19,13 @@ import os
 from pathlib import Path
 from typing import Any, List, Optional
 
+# Default cap on a single video's duration: videos longer than this are
+# skipped entirely rather than downloaded. This avoids accidentally pulling
+# in multi-hour live sets/streams (which also balloon preprocessing/training
+# time -- a single hour-long file can expand into thousands of training
+# segments). Pass ``max_duration_seconds=None`` to disable the limit.
+DEFAULT_MAX_VIDEO_DURATION_SECONDS = 2 * 60 * 60  # 2 hours
+
 
 def _import_yt_dlp():
     try:
@@ -35,6 +42,7 @@ def _build_ydl_opts(
     output_dir: str,
     audio_format: str,
     filename: Optional[str] = None,
+    max_duration_seconds: Optional[int] = DEFAULT_MAX_VIDEO_DURATION_SECONDS,
 ) -> dict:
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
@@ -44,7 +52,7 @@ def _build_ydl_opts(
         else os.path.join(output_dir, "%(title)s.%(ext)s")
     )
 
-    return {
+    opts = {
         "format": "bestaudio/best",
         "outtmpl": out_template,
         "postprocessors": [
@@ -56,6 +64,44 @@ def _build_ydl_opts(
         "quiet": True,
         "noplaylist": True,
     }
+
+    if max_duration_seconds is not None:
+        # Belt-and-suspenders duration cap applied at download time (in
+        # addition to any upfront filtering done on search results): skips a
+        # video if yt-dlp determines its duration exceeds the limit, even if
+        # that wasn't known ahead of time (e.g. a direct URL download, or a
+        # live/upcoming video whose duration wasn't available during search).
+        opts["match_filter"] = _duration_match_filter(max_duration_seconds)
+
+    return opts
+
+
+def _duration_match_filter(max_duration_seconds: int):
+    """Build a yt-dlp ``match_filter`` rejecting videos longer than the limit.
+
+    A yt-dlp ``match_filter`` is a callable taking ``(info_dict, *,
+    incomplete)`` and returning ``None`` to allow the video through, or a
+    string (the skip reason) to reject it. Implemented directly (instead of
+    relying on yt-dlp's internal ``match_filter_func`` helper/DSL) so it has
+    no dependency on yt-dlp internals and is trivially unit-testable/mockable.
+
+    Entries with an unknown duration (``None``) are allowed through -- yt-dlp
+    calls the filter once with incomplete info (duration may not be known
+    yet) and again once the full info (including duration) is available, so
+    rejecting on an unknown duration here could incorrectly block a video
+    before its real duration was ever checked.
+    """
+
+    def _filter(info_dict: dict, *, incomplete: bool = False) -> Optional[str]:
+        duration = info_dict.get("duration")
+        if duration is not None and duration > max_duration_seconds:
+            return (
+                f"video duration {duration}s exceeds max_duration_seconds="
+                f"{max_duration_seconds}, skipping .."
+            )
+        return None
+
+    return _filter
 
 
 def _resolve_final_path(ydl: Any, info: dict, audio_format: str) -> str:
@@ -75,6 +121,7 @@ def download_audio(
     output_dir: str,
     audio_format: str = "wav",
     filename: Optional[str] = None,
+    max_duration_seconds: Optional[int] = DEFAULT_MAX_VIDEO_DURATION_SECONDS,
 ) -> str:
     """Download the audio track of a YouTube video and save it to disk.
 
@@ -85,19 +132,30 @@ def download_audio(
         audio_format: Target audio codec/container (e.g. "wav", "mp3").
         filename: Optional base filename (without extension). If not
             provided, yt-dlp's video title/id template is used.
+        max_duration_seconds: Reject the video if its duration exceeds this
+            many seconds (default: 2 hours). Pass ``None`` to disable the
+            limit.
 
     Returns:
         The absolute path to the downloaded audio file.
 
     Raises:
         ImportError: If the optional ``yt-dlp`` dependency is not installed.
-        RuntimeError: If the download finished but no output file was found.
+        RuntimeError: If the download finished but no output file was found,
+            or the video exceeded ``max_duration_seconds`` and was skipped.
     """
     yt_dlp = _import_yt_dlp()
-    ydl_opts = _build_ydl_opts(output_dir, audio_format, filename)
+    ydl_opts = _build_ydl_opts(
+        output_dir, audio_format, filename, max_duration_seconds=max_duration_seconds
+    )
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
+        if info is None:
+            raise RuntimeError(
+                f"Video at '{url}' was rejected (likely exceeds "
+                f"max_duration_seconds={max_duration_seconds})."
+            )
         return _resolve_final_path(ydl, info, audio_format)
 
 
@@ -107,6 +165,7 @@ def search_and_download_audio(
     audio_format: str = "wav",
     filename: Optional[str] = None,
     max_results: int = 1,
+    max_duration_seconds: Optional[int] = DEFAULT_MAX_VIDEO_DURATION_SECONDS,
 ) -> str:
     """Search YouTube for ``query`` and download the audio of the top match.
 
@@ -123,6 +182,9 @@ def search_and_download_audio(
         max_results: How many search results yt-dlp should fetch before
             picking the first one. Kept at 1 by default to only download a
             single, best-ranked match.
+        max_duration_seconds: Reject the top match if its duration exceeds
+            this many seconds (default: 2 hours). Pass ``None`` to disable
+            the limit.
 
     Returns:
         The absolute path to the downloaded audio file.
@@ -137,7 +199,9 @@ def search_and_download_audio(
         raise ValueError("Search query must not be empty.")
 
     yt_dlp = _import_yt_dlp()
-    ydl_opts = _build_ydl_opts(output_dir, audio_format, filename)
+    ydl_opts = _build_ydl_opts(
+        output_dir, audio_format, filename, max_duration_seconds=max_duration_seconds
+    )
     search_term = f"ytsearch{max_results}:{query.strip()}"
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -156,6 +220,7 @@ def search_and_download_many(
     count: int = 200,
     audio_format: str = "wav",
     skip_errors: bool = True,
+    max_duration_seconds: Optional[int] = DEFAULT_MAX_VIDEO_DURATION_SECONDS,
 ) -> List[str]:
     """Search YouTube for ``query`` and download audio for up to ``count`` results.
 
@@ -174,6 +239,12 @@ def search_and_download_many(
             (e.g. region-locked, age-restricted, no audio stream) is logged
             and skipped so the rest of the batch can still complete. If
             False, the first error aborts the whole batch.
+        max_duration_seconds: Skip any video longer than this many seconds
+            (default: 2 hours). Videos are filtered out both upfront (using
+            the duration already present in the flat search results, at no
+            extra network cost) and again at download time as a fallback for
+            entries whose duration wasn't known during search. Pass ``None``
+            to disable the limit.
 
     Returns:
         A list of paths to the successfully downloaded audio files. May have
@@ -191,7 +262,9 @@ def search_and_download_many(
         raise ValueError("count must be a positive integer.")
 
     yt_dlp = _import_yt_dlp()
-    ydl_opts = _build_ydl_opts(output_dir, audio_format)
+    ydl_opts = _build_ydl_opts(
+        output_dir, audio_format, max_duration_seconds=max_duration_seconds
+    )
     # Over-fetch search results: ytsearchN sometimes returns non-video entries
     # (e.g. a channel or "YoutubeTab" page instead of an actual video), which
     # must be filtered out before counting towards the requested ``count``.
@@ -233,6 +306,21 @@ def search_and_download_many(
         if entry and entry.get("ie_key", "Youtube") == "Youtube"
     ]
 
+    # Also filter out videos that are already known to be too long, using the
+    # `duration` field yt-dlp's flat search already provides -- this skips
+    # them for free, without spending any time/bandwidth resolving or
+    # downloading them. Entries with an unknown duration at this stage (e.g.
+    # `None`) are kept; they are still protected by the `match_filter` set on
+    # `ydl_opts` below, which re-checks duration once it's known at download
+    # time.
+    if max_duration_seconds is not None:
+        video_entries = [
+            entry
+            for entry in video_entries
+            if entry.get("duration") is None
+            or entry.get("duration") <= max_duration_seconds
+        ]
+
     if not video_entries:
         raise RuntimeError(f"No YouTube results found for query: '{query}'")
 
@@ -246,6 +334,15 @@ def search_and_download_many(
             video_url = entry.get("webpage_url") or entry.get("url")
             try:
                 video_info = ydl.extract_info(video_url, download=True)
+                if video_info is None:
+                    # yt-dlp's match_filter (e.g. duration cap) rejected this
+                    # video at download time -- it returns None instead of
+                    # raising. Treat it the same as a skipped/failed entry.
+                    print(
+                        f"[WARN] Skipping '{video_url}': rejected by match_filter "
+                        f"(likely exceeds max_duration_seconds={max_duration_seconds})"
+                    )
+                    continue
                 downloaded_paths.append(
                     _resolve_final_path(ydl, video_info, audio_format)
                 )
@@ -286,18 +383,36 @@ def main(argv: Optional[list] = None) -> None:
         help="Number of videos to download for the query (default: 1, the best match). "
         "Use e.g. --count 200 to download many tracks for the same query.",
     )
+    parser.add_argument(
+        "--max-duration",
+        type=int,
+        default=DEFAULT_MAX_VIDEO_DURATION_SECONDS,
+        help="Skip videos longer than this many seconds (default: 7200 = 2 hours). "
+        "Use 0 or a negative value to disable the limit.",
+    )
     args = parser.parse_args(argv)
 
     query = args.query or input("Wpisz słowo/frazę do wyszukania na YouTube: ").strip()
     if not query:
         raise SystemExit("Nie podano frazy wyszukiwania.")
 
+    max_duration_seconds = args.max_duration if args.max_duration and args.max_duration > 0 else None
+
     if args.count == 1:
-        path = search_and_download_audio(query, args.output_dir, args.audio_format)
+        path = search_and_download_audio(
+            query,
+            args.output_dir,
+            args.audio_format,
+            max_duration_seconds=max_duration_seconds,
+        )
         print(f"Pobrano: {path}")
     else:
         paths = search_and_download_many(
-            query, args.output_dir, count=args.count, audio_format=args.audio_format
+            query,
+            args.output_dir,
+            count=args.count,
+            audio_format=args.audio_format,
+            max_duration_seconds=max_duration_seconds,
         )
         print(f"Pobrano {len(paths)}/{args.count} plik(ów) dla zapytania '{query}'.")
 

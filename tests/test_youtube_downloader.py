@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from downloader.youtube_downloader import (
+    _duration_match_filter,
     download_audio,
     search_and_download_audio,
     search_and_download_many,
@@ -330,3 +331,148 @@ def test_search_and_download_many_stops_exactly_at_count(tmp_path):
     # Exactly 2 downloads attempted/succeeded, even though 10 candidates existed.
     assert len(extracted_urls) == 2
     assert len(result_paths) == 2
+
+
+def test_duration_match_filter_allows_short_and_unknown_rejects_long():
+    """``_duration_match_filter`` should allow videos at/under the limit and
+    videos with an unknown duration (None), but reject anything longer.
+    """
+    f = _duration_match_filter(7200)  # 2 hours
+
+    assert f({"duration": None}, incomplete=False) is None
+    assert f({"duration": 100}, incomplete=False) is None
+    assert f({"duration": 7200}, incomplete=False) is None
+
+    reason = f({"duration": 7201}, incomplete=False)
+    assert reason is not None
+    assert "7201" in reason
+
+
+def test_search_and_download_many_skips_videos_over_duration_limit(tmp_path):
+    """Entries whose (flat-search-provided) duration exceeds
+    ``max_duration_seconds`` must be filtered out before any download is
+    attempted, mirroring the real-world case of a multi-hour live set
+    showing up in search results.
+    """
+    output_dir = tmp_path / "raw"
+
+    entries = [
+        {
+            "title": "Short Track",
+            "ext": "webm",
+            "webpage_url": "https://yt/short",
+            "ie_key": "Youtube",
+            "duration": 180,
+        },
+        {
+            "title": "Multi-Hour Live Set",
+            "ext": "webm",
+            "webpage_url": "https://yt/long",
+            "ie_key": "Youtube",
+            "duration": 3 * 60 * 60,  # 3 hours, over the 2h default limit
+        },
+    ]
+    search_result = {"entries": entries}
+
+    mock_ydl_instance = MagicMock()
+    mock_ydl_instance.__enter__.return_value = mock_ydl_instance
+    mock_ydl_instance.__exit__.return_value = False
+
+    extracted_urls = []
+
+    def fake_extract_info(target, download=False):
+        if target.startswith("ytsearch"):
+            return search_result
+        extracted_urls.append(target)
+        entry = next(e for e in entries if e["webpage_url"] == target)
+        final_path = output_dir / f"{entry['title']}.wav"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        final_path.touch()
+        return entry
+
+    def fake_prepare_filename(info):
+        return str(output_dir / f"{info['title']}.webm")
+
+    mock_ydl_instance.extract_info.side_effect = fake_extract_info
+    mock_ydl_instance.prepare_filename.side_effect = fake_prepare_filename
+
+    fake_yt_dlp_module = MagicMock()
+    fake_yt_dlp_module.YoutubeDL.return_value = mock_ydl_instance
+
+    with patch.dict("sys.modules", {"yt_dlp": fake_yt_dlp_module}):
+        result_paths = search_and_download_many(
+            query="some topic",
+            output_dir=str(output_dir),
+            count=2,
+            audio_format="wav",
+            max_duration_seconds=2 * 60 * 60,
+        )
+
+    # Only the short track should ever have been passed to extract_info.
+    assert extracted_urls == ["https://yt/short"]
+    assert len(result_paths) == 1
+    assert "Short Track" in result_paths[0]
+
+
+def test_search_and_download_many_handles_match_filter_rejection_at_download_time(tmp_path):
+    """If a video's duration is unknown during the flat search (so it isn't
+    pre-filtered) but yt-dlp's match_filter rejects it once the real
+    duration is known at download time, extract_info returns None. This must
+    be handled gracefully (skipped) rather than crashing.
+    """
+    output_dir = tmp_path / "raw"
+
+    entries = [
+        {
+            "title": "Unknown Duration Live Stream",
+            "ext": "webm",
+            "webpage_url": "https://yt/unknown",
+            "ie_key": "Youtube",
+            "duration": None,
+        },
+        {
+            "title": "Good Track",
+            "ext": "webm",
+            "webpage_url": "https://yt/good",
+            "ie_key": "Youtube",
+            "duration": 200,
+        },
+    ]
+    search_result = {"entries": entries}
+
+    mock_ydl_instance = MagicMock()
+    mock_ydl_instance.__enter__.return_value = mock_ydl_instance
+    mock_ydl_instance.__exit__.return_value = False
+
+    def fake_extract_info(target, download=False):
+        if target.startswith("ytsearch"):
+            return search_result
+        if target == "https://yt/unknown":
+            # Simulates yt-dlp's match_filter rejecting the video once its
+            # real (too-long) duration becomes known at download time.
+            return None
+        entry = next(e for e in entries if e["webpage_url"] == target)
+        final_path = output_dir / f"{entry['title']}.wav"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        final_path.touch()
+        return entry
+
+    def fake_prepare_filename(info):
+        return str(output_dir / f"{info['title']}.webm")
+
+    mock_ydl_instance.extract_info.side_effect = fake_extract_info
+    mock_ydl_instance.prepare_filename.side_effect = fake_prepare_filename
+
+    fake_yt_dlp_module = MagicMock()
+    fake_yt_dlp_module.YoutubeDL.return_value = mock_ydl_instance
+
+    with patch.dict("sys.modules", {"yt_dlp": fake_yt_dlp_module}):
+        result_paths = search_and_download_many(
+            query="some topic",
+            output_dir=str(output_dir),
+            count=2,
+            audio_format="wav",
+        )
+
+    assert len(result_paths) == 1
+    assert "Good Track" in result_paths[0]

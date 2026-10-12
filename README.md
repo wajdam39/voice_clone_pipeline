@@ -234,6 +234,26 @@ python -m downloader.youtube_downloader "fraza wyszukiwania" --count 200
 Pojedyncze niedostępne/zablokowane filmy są domyślnie pomijane
 (`skip_errors=True`), więc jeden błąd nie przerywa całej serii pobierania.
 
+Filmy dłuższe niż **2 godziny** (np. wielogodzinne sesje/koncerty live) są
+domyślnie pomijane (`max_duration_seconds=7200`), żeby przypadkowo nie
+ściągnąć bardzo dużych plików, które potem drastycznie wydłużają
+preprocessing i trening (jeden godzinny plik audio może wygenerować tysiące
+segmentów treningowych). Limit można zmienić lub wyłączyć:
+
+```python
+# Zmień limit na 30 minut:
+paths = search_and_download_many("fraza", "data/raw", count=200, max_duration_seconds=1800)
+
+# Wyłącz limit całkowicie:
+paths = search_and_download_many("fraza", "data/raw", count=200, max_duration_seconds=None)
+```
+
+Albo z CLI (`--max-duration` w sekundach; `0` lub wartość ujemna wyłącza limit):
+
+```bash
+python -m downloader.youtube_downloader "fraza wyszukiwania" --count 200 --max-duration 1800
+```
+
 ### Normalizacja spektrogramów: globalna vs lokalna (dlaczego kolejność z segmentacją ma znaczenie)
 
 Pipeline tnie znormalizowane spektrogramy na mniejsze, stałe fragmenty
@@ -502,7 +522,10 @@ python -m scripts.run_pipeline "fraza" --count 100 --skip-train --skip-generate
 ```
 
 Pełna lista opcji: `--raw-dir`, `--processed-dir`, `--normalized-dir`,
-`--norm-stats-path`, `--config`, `--output`, `--format`, `--fail-fast`.
+`--norm-stats-path`, `--config`, `--output`, `--format`, `--fail-fast`,
+`--max-duration` (limit długości pojedynczego filmu w sekundach, domyślnie
+7200 = 2 godziny; `0` lub ujemna wartość wyłącza limit — patrz sekcja o
+`search_and_download_many` powyżej).
 
 ### Statystyki zbioru danych (`compute_npy_statistics` / `generate_dataset_statistics`)
 
@@ -590,6 +613,8 @@ python -m scripts.build_dataset "fraza" --count 200 --raw-dir data/raw --process
 
 - `--fail-fast` — przerywa całe pobieranie przy pierwszym błędzie (domyślnie
   błędy pojedynczych filmów są pomijane).
+- `--max-duration` — limit długości pojedynczego filmu w sekundach (domyślnie
+  7200 = 2 godziny, patrz sekcja o `search_and_download_many` powyżej).
 
 ### Pobieranie z poziomu linii poleceń
 

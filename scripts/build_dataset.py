@@ -17,7 +17,10 @@ from __future__ import annotations
 import argparse
 from typing import List, Optional
 
-from downloader.youtube_downloader import search_and_download_many
+from downloader.youtube_downloader import (
+    DEFAULT_MAX_VIDEO_DURATION_SECONDS,
+    search_and_download_many,
+)
 from preprocessing.preprocess import (
     DEFAULT_CONFIG_PATH,
     DEFAULT_PROCESSED_DIR,
@@ -36,6 +39,7 @@ def build_dataset(
     audio_format: str = "wav",
     config_path: str = DEFAULT_CONFIG_PATH,
     skip_errors: bool = True,
+    max_duration_seconds: Optional[int] = DEFAULT_MAX_VIDEO_DURATION_SECONDS,
 ) -> List[str]:
     """Download ``count`` tracks for ``query`` and preprocess all of them.
 
@@ -51,6 +55,8 @@ def build_dataset(
         skip_errors: Whether to skip individual download failures instead of
             aborting the whole batch (see
             ``downloader.youtube_downloader.search_and_download_many``).
+        max_duration_seconds: Skip videos longer than this many seconds
+            (default: 2 hours). Pass ``None`` to disable the limit.
 
     Returns:
         A list of paths to the saved ``.npy`` mel-spectrogram files.
@@ -62,6 +68,7 @@ def build_dataset(
         count=count,
         audio_format=audio_format,
         skip_errors=skip_errors,
+        max_duration_seconds=max_duration_seconds,
     )
     safe_print(f"Pobrano {len(downloaded_paths)}/{count} plik(ów) do '{raw_dir}'.")
 
@@ -124,7 +131,16 @@ def main(argv: Optional[list] = None) -> None:
         action="store_true",
         help="Abort the whole batch on the first download error instead of skipping it.",
     )
+    parser.add_argument(
+        "--max-duration",
+        type=int,
+        default=DEFAULT_MAX_VIDEO_DURATION_SECONDS,
+        help="Skip videos longer than this many seconds (default: 7200 = 2 hours). "
+        "Use 0 or a negative value to disable the limit.",
+    )
     args = parser.parse_args(argv)
+
+    max_duration_seconds = args.max_duration if args.max_duration and args.max_duration > 0 else None
 
     build_dataset(
         query=args.query,
@@ -134,6 +150,7 @@ def main(argv: Optional[list] = None) -> None:
         audio_format=args.audio_format,
         config_path=args.config,
         skip_errors=not args.fail_fast,
+        max_duration_seconds=max_duration_seconds,
     )
 
 
