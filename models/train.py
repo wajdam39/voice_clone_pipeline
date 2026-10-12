@@ -19,6 +19,7 @@ import yaml
 from models.dataset import SegmentedVoiceDataset
 from models.diffusion import GaussianDiffusion
 from models.model import DiffusionUNet
+from preprocessing.preprocess import safe_print
 
 
 def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
@@ -140,10 +141,12 @@ def train(data_dir: str, config: dict):
     import torch
     from torch.utils.data import DataLoader
 
+    safe_print(f"Rozpoczynam trening modelu z danymi w: {data_dir}", flush=True)
     file_paths = sorted(glob.glob(os.path.join(data_dir, "*.npy")))
     if not file_paths:
         raise FileNotFoundError(f"No .npy files found in '{data_dir}'.")
 
+    safe_print(f"Znaleziono {len(file_paths)} plików .npy w '{data_dir}'.", flush=True)
     segmentation_cfg = config.get("segmentation", {})
     _, segment_length = get_model_dims(config)
     dataset = SegmentedVoiceDataset(
@@ -155,8 +158,15 @@ def train(data_dir: str, config: dict):
     batch_size = train_cfg.get("batch_size", 16)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    safe_print(f"Używane urządzenie: {device}", flush=True)
+    safe_print(
+        f"Zainicjalizowano DataLoader z batch_size={batch_size} i {len(loader)} batchami.",
+        flush=True,
+    )
     model, diffusion = build_diffusion_model(config)
-
+    model.to(device)
+    safe_print("Zbudowano model DiffusionUNet i GaussianDiffusion z configu.", flush=True)
     optimizer = torch.optim.Adam(
         model.parameters(), lr=train_cfg.get("learning_rate", 1e-4)
     )
@@ -165,13 +175,18 @@ def train(data_dir: str, config: dict):
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     num_epochs = train_cfg.get("num_epochs", 100)
+    # Log progress every `log_every` batches so large datasets (many/long
+    # audio files -> many segments -> many batches per epoch) don't make
+    # training look stuck for minutes/hours with no output between epochs.
+    log_every = max(1, train_cfg.get("log_every", 50))
+    num_batches = len(loader)
     for epoch in range(num_epochs):
         model.train()
         epoch_loss = 0.0
-        for batch in loader:
+        for batch_idx, batch in enumerate(loader, start=1):
             # batch: (batch_size, n_mels, segment_length) -> add channel dim
             # expected by DiffusionUNet: (batch_size, 1, n_mels, segment_length).
-            x_start = batch.unsqueeze(1)
+            x_start = batch.unsqueeze(1).to(device)
 
             optimizer.zero_grad()
             loss = diffusion.training_loss(x_start)
@@ -179,23 +194,40 @@ def train(data_dir: str, config: dict):
             optimizer.step()
             epoch_loss += loss.item()
 
+            if batch_idx % log_every == 0 or batch_idx == num_batches:
+                safe_print(
+                    f"  Epoch {epoch + 1}/{num_epochs} - batch {batch_idx}/{num_batches} "
+                    f"- loss: {loss.item():.4f}",
+                    flush=True,
+                )
+
         avg_loss = epoch_loss / max(len(loader), 1)
-        print(f"Epoch {epoch + 1}/{num_epochs} - loss: {avg_loss:.4f}")
+        safe_print(f"Epoch {epoch + 1}/{num_epochs} - loss: {avg_loss:.4f}", flush=True)
 
         torch.save(model.state_dict(), checkpoint_dir / f"model_epoch{epoch + 1}.pt")
 
     final_checkpoint_path = checkpoint_dir / "model_final.pt"
     torch.save(model.state_dict(), final_checkpoint_path)
-    print(f"Zapisano finalny checkpoint: {final_checkpoint_path}")
+    safe_print(f"Zapisano finalny checkpoint: {final_checkpoint_path}", flush=True)
 
     model.eval()
     return model
 
 
 def main(argv: Optional[list] = None) -> None:
+    safe_print(
+        "Uruchomiono trening modelu akustycznego (DiffusionUNet) dla klonowania głosu.",
+        flush=True,
+    )
     args = parse_args(argv)
+    safe_print(
+        f"Uruchomiono trening z configiem: {args.config} i danymi w: {args.data_dir}",
+        flush=True,
+    )
     config = load_config(args.config)
+    safe_print(f"Wczytano config treningu: {config}", flush=True)
     train(args.data_dir, config)
+    safe_print("Trening zakończony.", flush=True)
 
 
 if __name__ == "__main__":

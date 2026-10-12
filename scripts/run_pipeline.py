@@ -145,12 +145,16 @@ def run_pipeline(
 
     # ---- Stage 3: Trenowanie (train) ----
     train_cfg = config.get("train", {})
+    print(f"[3/5] Trenowanie modelu z configu '{config_path}'...")
     checkpoint_dir = Path(train_cfg.get("checkpoint_dir", "checkpoints"))
+    print(f"[3/5] Checkpointy modelu zostaną zapisane w: {checkpoint_dir}")
     final_checkpoint_path = checkpoint_dir / "model_final.pt"
+    print(f"[3/5] Finalny checkpoint modelu zostanie zapisany w: {final_checkpoint_path}")
 
     if not skip_train:
         safe_print(f"[3/5] Trenowanie modelu na '{normalized_dir}'...")
         train_config = load_config(config_path)
+        print(f"[3/5] Wczytano config treningu: {train_config}")
         if num_epochs_override is not None:
             train_config.setdefault("train", {})["num_epochs"] = num_epochs_override
         train(normalized_dir, train_config)

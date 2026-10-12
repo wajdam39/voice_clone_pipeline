@@ -42,20 +42,20 @@ DEFAULT_STATS_PATH = "data/dataset_stats.json"
 DEFAULT_NORM_STATS_PATH = "data/normalization_stats.json"
 
 
-def safe_print(message: str) -> None:
+def safe_print(message: str, flush: bool = False) -> None:
     """Print ``message``, falling back to a safe encoding on narrow consoles.
 
-    Some Windows terminals use a legacy codepage (e.g. cp1252) that cannot
+    Some Windows terminals/redirected-output codepages (e.g. cp1252) cannot
     encode every Unicode character that may appear in a downloaded video
-    title (emoji, full-width punctuation, etc.). Rather than crashing the
-    whole CLI over a cosmetic print, fall back to replacing unprintable
-    characters.
+    title or in Polish-language log messages (e.g. "ż", "ą", "ó"). Rather
+    than crashing the whole CLI/training run over a cosmetic print, fall
+    back to replacing unprintable characters.
     """
     try:
-        print(message)
+        print(message, flush=flush)
     except UnicodeEncodeError:
         encoding = getattr(sys.stdout, "encoding", None) or "ascii"
-        print(message.encode(encoding, errors="replace").decode(encoding))
+        print(message.encode(encoding, errors="replace").decode(encoding), flush=flush)
 
 
 def load_preprocessing_config(config_path: str = DEFAULT_CONFIG_PATH) -> dict:

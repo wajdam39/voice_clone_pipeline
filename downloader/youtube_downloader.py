@@ -192,7 +192,13 @@ def search_and_download_many(
 
     yt_dlp = _import_yt_dlp()
     ydl_opts = _build_ydl_opts(output_dir, audio_format)
-    search_term = f"ytsearch{count}:{query.strip()}"
+    # Over-fetch search results: ytsearchN sometimes returns non-video entries
+    # (e.g. a channel or "YoutubeTab" page instead of an actual video), which
+    # must be filtered out before counting towards the requested ``count``.
+    # Requesting extra candidates up front avoids a second network round-trip
+    # when some entries turn out to be unusable.
+    fetch_count = max(count * 2, count + 10)
+    search_term = f"ytsearch{fetch_count}:{query.strip()}"
 
     downloaded_paths: List[str] = []
 
@@ -200,12 +206,29 @@ def search_and_download_many(
         # First, resolve the search results WITHOUT downloading, so a single
         # broken entry can't abort metadata extraction for the whole batch.
         search_info = ydl.extract_info(search_term, download=False)
-        entries = list(search_info.get("entries") or [])
+        all_entries = list(search_info.get("entries") or [])
 
-        if not entries:
+        # Keep only entries that look like single, directly downloadable
+        # videos. Entries whose ie_key/_type indicate a channel, playlist, or
+        # other container (e.g. "YoutubeTab") are skipped here -- passing
+        # such a URL to extract_info(download=True) would recursively
+        # download many/all videos from that channel/playlist, blowing past
+        # the requested ``count`` with no predictable stopping point.
+        video_entries = [
+            entry
+            for entry in all_entries
+            if entry and entry.get("ie_key", "Youtube") == "Youtube"
+        ]
+
+        if not video_entries:
             raise RuntimeError(f"No YouTube results found for query: '{query}'")
 
-        for entry in entries:
+        for entry in video_entries:
+            # Hard cap: stop as soon as we have exactly `count` successful
+            # downloads, regardless of how many candidate entries remain.
+            if len(downloaded_paths) >= count:
+                break
+
             video_url = entry.get("webpage_url") or entry.get("url")
             try:
                 video_info = ydl.extract_info(video_url, download=True)

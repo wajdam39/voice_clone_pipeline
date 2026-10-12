@@ -220,3 +220,113 @@ def test_search_and_download_many_skips_failed_entries(tmp_path):
 def test_search_and_download_many_raises_on_invalid_count(tmp_path):
     with pytest.raises(ValueError):
         search_and_download_many(query="x", output_dir=str(tmp_path), count=0)
+
+
+def test_search_and_download_many_filters_out_non_video_entries(tmp_path):
+    """A ytsearch result page can include non-video entries (e.g. a channel
+    page, ie_key='YoutubeTab') mixed in with real videos. These must be
+    filtered out before downloading, since passing a channel/playlist URL to
+    extract_info(download=True) would recursively pull many/all of its
+    videos instead of the single result it appears to be.
+    """
+    output_dir = tmp_path / "raw"
+
+    entries = [
+        {"title": "Real Video", "ext": "webm", "webpage_url": "https://yt/real", "ie_key": "Youtube"},
+        {
+            "title": "Some Channel",
+            "ext": None,
+            "webpage_url": "https://www.youtube.com/channel/UCxxxx",
+            "ie_key": "YoutubeTab",
+        },
+    ]
+    search_result = {"entries": entries}
+
+    mock_ydl_instance = MagicMock()
+    mock_ydl_instance.__enter__.return_value = mock_ydl_instance
+    mock_ydl_instance.__exit__.return_value = False
+
+    extracted_urls = []
+
+    def fake_extract_info(target, download=False):
+        if target.startswith("ytsearch"):
+            return search_result
+        extracted_urls.append(target)
+        entry = next(e for e in entries if e["webpage_url"] == target)
+        final_path = output_dir / f"{entry['title']}.wav"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        final_path.touch()
+        return entry
+
+    def fake_prepare_filename(info):
+        return str(output_dir / f"{info['title']}.webm")
+
+    mock_ydl_instance.extract_info.side_effect = fake_extract_info
+    mock_ydl_instance.prepare_filename.side_effect = fake_prepare_filename
+
+    fake_yt_dlp_module = MagicMock()
+    fake_yt_dlp_module.YoutubeDL.return_value = mock_ydl_instance
+
+    with patch.dict("sys.modules", {"yt_dlp": fake_yt_dlp_module}):
+        result_paths = search_and_download_many(
+            query="some topic",
+            output_dir=str(output_dir),
+            count=2,
+            audio_format="wav",
+        )
+
+    # Only the real video should ever have been passed to extract_info for download.
+    assert extracted_urls == ["https://yt/real"]
+    assert len(result_paths) == 1
+    assert "Real Video" in result_paths[0]
+
+
+def test_search_and_download_many_stops_exactly_at_count(tmp_path):
+    """Even if more candidate video entries are available than requested,
+    the function must stop downloading as soon as ``count`` successes are
+    reached, instead of continuing through the rest of the result list.
+    """
+    output_dir = tmp_path / "raw"
+
+    entries = [
+        {"title": f"Track {i}", "ext": "webm", "webpage_url": f"https://yt/{i}", "ie_key": "Youtube"}
+        for i in range(10)
+    ]
+    search_result = {"entries": entries}
+
+    mock_ydl_instance = MagicMock()
+    mock_ydl_instance.__enter__.return_value = mock_ydl_instance
+    mock_ydl_instance.__exit__.return_value = False
+
+    extracted_urls = []
+
+    def fake_extract_info(target, download=False):
+        if target.startswith("ytsearch"):
+            return search_result
+        extracted_urls.append(target)
+        entry = next(e for e in entries if e["webpage_url"] == target)
+        final_path = output_dir / f"{entry['title']}.wav"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        final_path.touch()
+        return entry
+
+    def fake_prepare_filename(info):
+        return str(output_dir / f"{info['title']}.webm")
+
+    mock_ydl_instance.extract_info.side_effect = fake_extract_info
+    mock_ydl_instance.prepare_filename.side_effect = fake_prepare_filename
+
+    fake_yt_dlp_module = MagicMock()
+    fake_yt_dlp_module.YoutubeDL.return_value = mock_ydl_instance
+
+    with patch.dict("sys.modules", {"yt_dlp": fake_yt_dlp_module}):
+        result_paths = search_and_download_many(
+            query="some topic",
+            output_dir=str(output_dir),
+            count=2,
+            audio_format="wav",
+        )
+
+    # Exactly 2 downloads attempted/succeeded, even though 10 candidates existed.
+    assert len(extracted_urls) == 2
+    assert len(result_paths) == 2
