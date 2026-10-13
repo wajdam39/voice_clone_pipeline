@@ -6,6 +6,15 @@ downloader:
   # a logged-in browser session, helping avoid bot-detection/age/region
   # errors). Silently ignored if the file doesn't exist.
   cookies_file: youtube.com_cookies.txt
+  # External JS runtime yt-dlp uses to solve YouTube's JS challenge (EJS).
+  # Required to avoid download failures/blocks from datacenter/cloud IPs
+  # (e.g. AWS EC2). "node" is used instead of yt-dlp's own default ("deno")
+  # since Node.js is more commonly pre-installed/available on EC2 images.
+  js_runtime: node
+  # Lets yt-dlp fetch the EJS challenge-solver scripts from GitHub on demand
+  # so js_runtime above has something to execute.
+  remote_components:
+  - ejs:github
 
 preprocessing:
   target_sample_rate: 22050

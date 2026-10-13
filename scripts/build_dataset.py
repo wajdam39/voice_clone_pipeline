@@ -19,7 +19,9 @@ from typing import List, Optional
 
 from downloader.youtube_downloader import (
     DEFAULT_COOKIES_FILE,
+    DEFAULT_JS_RUNTIME,
     DEFAULT_MAX_VIDEO_DURATION_SECONDS,
+    DEFAULT_REMOTE_COMPONENTS,
     search_and_download_many,
 )
 from preprocessing.preprocess import (
@@ -42,6 +44,8 @@ def build_dataset(
     skip_errors: bool = True,
     max_duration_seconds: Optional[int] = DEFAULT_MAX_VIDEO_DURATION_SECONDS,
     cookies_file: Optional[str] = DEFAULT_COOKIES_FILE,
+    js_runtime: Optional[str] = DEFAULT_JS_RUNTIME,
+    remote_components=DEFAULT_REMOTE_COMPONENTS,
 ) -> List[str]:
     """Download ``count`` tracks for ``query`` and preprocess all of them.
 
@@ -63,6 +67,12 @@ def build_dataset(
             yt-dlp, used to authenticate requests as a logged-in browser
             session (default: ``youtube.com_cookies.txt``, silently ignored
             if it doesn't exist).
+        js_runtime: External JS runtime yt-dlp uses to solve YouTube's JS
+            challenge (default: ``"node"``). Without a working JS runtime,
+            downloads from datacenter/cloud IPs (e.g. EC2) are very likely
+            to be blocked.
+        remote_components: Remote component(s) yt-dlp may fetch on demand
+            (default: ``"ejs:github"``).
 
     Returns:
         A list of paths to the saved ``.npy`` mel-spectrogram files.
@@ -76,6 +86,8 @@ def build_dataset(
         skip_errors=skip_errors,
         max_duration_seconds=max_duration_seconds,
         cookies_file=cookies_file,
+        js_runtime=js_runtime,
+        remote_components=remote_components,
     )
     safe_print(f"Pobrano {len(downloaded_paths)}/{count} plik(ów) do '{raw_dir}'.")
 
@@ -152,9 +164,31 @@ def main(argv: Optional[list] = None) -> None:
         f"(default: {DEFAULT_COOKIES_FILE}, silently ignored if it doesn't "
         "exist). Pass an empty string to disable cookies.",
     )
+    parser.add_argument(
+        "--js-runtime",
+        default=DEFAULT_JS_RUNTIME,
+        help="External JavaScript runtime used by yt-dlp to solve YouTube's JS "
+        f"challenge (default: {DEFAULT_JS_RUNTIME!r}, e.g. 'node', 'deno'). "
+        "Without a working JS runtime, downloads from datacenter/cloud IPs "
+        "(e.g. EC2) are very likely to be blocked. Pass an empty string to "
+        "fall back to yt-dlp's own default (deno).",
+    )
+    parser.add_argument(
+        "--remote-components",
+        default=",".join(DEFAULT_REMOTE_COMPONENTS),
+        help="Comma-separated remote component(s) yt-dlp may fetch on demand "
+        f"(default: {','.join(DEFAULT_REMOTE_COMPONENTS)!r}) so the JS runtime "
+        "above can actually solve YouTube's JS challenge. Pass an empty string "
+        "to disable.",
+    )
     args = parser.parse_args(argv)
 
     max_duration_seconds = args.max_duration if args.max_duration and args.max_duration > 0 else None
+    remote_components = (
+        [c.strip() for c in args.remote_components.split(",") if c.strip()]
+        if args.remote_components
+        else None
+    )
 
     build_dataset(
         query=args.query,
@@ -166,6 +200,8 @@ def main(argv: Optional[list] = None) -> None:
         skip_errors=not args.fail_fast,
         max_duration_seconds=max_duration_seconds,
         cookies_file=args.cookies_file,
+        js_runtime=args.js_runtime,
+        remote_components=remote_components,
     )
 
 

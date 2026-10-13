@@ -28,6 +28,16 @@ download:
   # Git (see .gitignore) -- export your own via a browser extension like
   # "Get cookies.txt LOCALLY" and place it at this path.
   cookies_file: "youtube.com_cookies.txt"
+  # External JS runtime yt-dlp uses to solve YouTube's JS challenge (EJS).
+  # Required to avoid download failures/blocks from datacenter/cloud IPs
+  # (e.g. AWS EC2). Must be installed and on PATH (e.g. `apt install
+  # nodejs` / `yum install nodejs` on EC2). Use "deno" instead if available
+  # (yt-dlp's own preferred runtime).
+  js_runtime: "node"
+  # Comma-separated remote component(s) yt-dlp may fetch on demand, so
+  # js_runtime above has something to execute. "ejs:github" downloads the
+  # EJS challenge-solver scripts from GitHub (cached locally afterwards).
+  remote_components: "ejs:github"
 
 generate:
   num_samples: 1

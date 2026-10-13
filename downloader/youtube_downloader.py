@@ -17,7 +17,7 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Union
 
 # Default cap on a single video's duration: videos longer than this are
 # skipped entirely rather than downloaded. This avoids accidentally pulling
@@ -34,6 +34,72 @@ DEFAULT_MAX_VIDEO_DURATION_SECONDS = 2 * 60 * 60  # 2 hours
 # `_resolve_cookies_file`); harmless/no-op otherwise, so the downloader still
 # works out of the box without it.
 DEFAULT_COOKIES_FILE = "youtube.com_cookies.txt"
+
+# YouTube now requires solving a JavaScript "challenge" (EJS, External JS
+# Scripts) for most requests; without a working JS runtime, downloads can
+# fail/get blocked entirely -- this is especially common from datacenter IPs
+# (e.g. AWS EC2), which YouTube flags much more aggressively than residential
+# IPs. yt-dlp solves this by running challenge-solver scripts in an external
+# JS runtime (deno/node/quickjs/bun), optionally fetched on demand from
+# GitHub/npm ("remote components"). See
+# https://github.com/yt-dlp/yt-dlp/wiki/ejs
+#
+# "node" is used as the default runtime (rather than yt-dlp's own default of
+# "deno") because Node.js is far more likely to already be installed/easily
+# installable on a typical EC2 instance/CI image than Deno. Override via
+# `js_runtime` if you do have deno/quickjs/bun available instead.
+DEFAULT_JS_RUNTIME = "node"
+
+# Allow yt-dlp to download the EJS challenge-solver scripts from GitHub on
+# demand (cached locally afterwards, see yt-dlp's --cache-dir). This is what
+# lets the "node"/"deno" runtime above actually solve YouTube's JS challenge
+# instead of merely being enabled with nothing to run. Set to an empty tuple
+# to disable (e.g. if GitHub is not reachable from your network).
+DEFAULT_REMOTE_COMPONENTS = ("ejs:github",)
+
+
+def _resolve_js_runtimes(
+    js_runtime: Optional[str],
+) -> Optional[dict]:
+    """Build the ``js_runtimes`` dict yt-dlp's Python API expects.
+
+    Args:
+        js_runtime: Name of a single JS runtime to enable (e.g. ``"node"``,
+            ``"deno"``, ``"quickjs"``, ``"bun"``), optionally suffixed with
+            ``:PATH`` to point at a non-PATH executable (e.g.
+            ``"node:/usr/local/bin/node"``), mirroring yt-dlp's ``--js-runtimes``
+            CLI syntax. Pass ``None``/``""`` to fall back to yt-dlp's own
+            default (``deno``, auto-enabled).
+
+    Returns:
+        A ``{runtime_name: {"path": path_or_None}}`` dict as expected by
+        ``YoutubeDL(params={"js_runtimes": ...})``, or ``None`` to let yt-dlp
+        use its built-in default.
+    """
+    if not js_runtime:
+        return None
+    name, _, path = js_runtime.partition(":")
+    return {name.strip().lower(): {"path": path.strip() or None}}
+
+
+def _resolve_remote_components(
+    remote_components: Optional[Union[str, List[str], tuple]],
+) -> Optional[List[str]]:
+    """Normalize ``remote_components`` into the list yt-dlp's API expects.
+
+    Args:
+        remote_components: A single component string (e.g. ``"ejs:github"``),
+            an iterable of such strings, or ``None``/empty to disable remote
+            component downloads entirely.
+
+    Returns:
+        A list of component strings, or ``None`` if none were requested.
+    """
+    if not remote_components:
+        return None
+    if isinstance(remote_components, str):
+        return [remote_components]
+    return list(remote_components)
 
 
 def _resolve_cookies_file(cookies_file: Optional[str]) -> Optional[str]:
@@ -70,6 +136,8 @@ def _build_ydl_opts(
     filename: Optional[str] = None,
     max_duration_seconds: Optional[int] = DEFAULT_MAX_VIDEO_DURATION_SECONDS,
     cookies_file: Optional[str] = DEFAULT_COOKIES_FILE,
+    js_runtime: Optional[str] = DEFAULT_JS_RUNTIME,
+    remote_components: Optional[Union[str, List[str], tuple]] = DEFAULT_REMOTE_COMPONENTS,
 ) -> dict:
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
@@ -108,6 +176,19 @@ def _build_ydl_opts(
         # errors and access age-restricted content. See
         # https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp
         opts["cookiefile"] = resolved_cookies_file
+
+    resolved_js_runtimes = _resolve_js_runtimes(js_runtime)
+    if resolved_js_runtimes is not None:
+        # Enables an external JS runtime (e.g. Node.js) so yt-dlp can solve
+        # YouTube's JS challenge (EJS). Without this, requests from
+        # datacenter/cloud IPs (e.g. EC2) are very likely to be blocked.
+        opts["js_runtimes"] = resolved_js_runtimes
+
+    resolved_remote_components = _resolve_remote_components(remote_components)
+    if resolved_remote_components is not None:
+        # Lets yt-dlp fetch the EJS challenge-solver scripts themselves (the
+        # code the JS runtime above actually executes) on demand from GitHub.
+        opts["remote_components"] = resolved_remote_components
 
     return opts
 
@@ -159,6 +240,8 @@ def download_audio(
     filename: Optional[str] = None,
     max_duration_seconds: Optional[int] = DEFAULT_MAX_VIDEO_DURATION_SECONDS,
     cookies_file: Optional[str] = DEFAULT_COOKIES_FILE,
+    js_runtime: Optional[str] = DEFAULT_JS_RUNTIME,
+    remote_components: Optional[Union[str, List[str], tuple]] = DEFAULT_REMOTE_COMPONENTS,
 ) -> str:
     """Download the audio track of a YouTube video and save it to disk.
 
@@ -178,6 +261,16 @@ def download_audio(
             logged-in browser session and avoid bot-detection/age/region
             errors. Silently ignored if the file doesn't exist. Pass
             ``None``/``""`` to disable cookies entirely.
+        js_runtime: External JavaScript runtime used by yt-dlp to solve
+            YouTube's JS challenge (EJS), as ``"name"`` or ``"name:path"``
+            (default: ``"node"``). Without a working JS runtime, downloads
+            from datacenter/cloud IPs (e.g. AWS EC2) are very likely to be
+            blocked. Pass ``None``/``""`` to fall back to yt-dlp's own
+            default (``deno``).
+        remote_components: Remote component(s) yt-dlp is allowed to fetch on
+            demand, e.g. ``"ejs:github"`` (default) to download the EJS
+            challenge-solver scripts from GitHub so ``js_runtime`` has
+            something to execute. Pass ``None``/empty to disable.
 
     Returns:
         The absolute path to the downloaded audio file.
@@ -194,6 +287,8 @@ def download_audio(
         filename,
         max_duration_seconds=max_duration_seconds,
         cookies_file=cookies_file,
+        js_runtime=js_runtime,
+        remote_components=remote_components,
     )
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -214,6 +309,8 @@ def search_and_download_audio(
     max_results: int = 1,
     max_duration_seconds: Optional[int] = DEFAULT_MAX_VIDEO_DURATION_SECONDS,
     cookies_file: Optional[str] = DEFAULT_COOKIES_FILE,
+    js_runtime: Optional[str] = DEFAULT_JS_RUNTIME,
+    remote_components: Optional[Union[str, List[str], tuple]] = DEFAULT_REMOTE_COMPONENTS,
 ) -> str:
     """Search YouTube for ``query`` and download the audio of the top match.
 
@@ -236,6 +333,10 @@ def search_and_download_audio(
         cookies_file: Path to a Netscape-format cookies file (default:
             ``youtube.com_cookies.txt``), see ``download_audio`` for details.
             Silently ignored if the file doesn't exist.
+        js_runtime: External JS runtime used to solve YouTube's JS challenge
+            (default: ``"node"``), see ``download_audio`` for details.
+        remote_components: Remote component(s) yt-dlp may fetch on demand
+            (default: ``"ejs:github"``), see ``download_audio`` for details.
 
     Returns:
         The absolute path to the downloaded audio file.
@@ -256,6 +357,8 @@ def search_and_download_audio(
         filename,
         max_duration_seconds=max_duration_seconds,
         cookies_file=cookies_file,
+        js_runtime=js_runtime,
+        remote_components=remote_components,
     )
     search_term = f"ytsearch{max_results}:{query.strip()}"
 
@@ -277,6 +380,8 @@ def search_and_download_many(
     skip_errors: bool = True,
     max_duration_seconds: Optional[int] = DEFAULT_MAX_VIDEO_DURATION_SECONDS,
     cookies_file: Optional[str] = DEFAULT_COOKIES_FILE,
+    js_runtime: Optional[str] = DEFAULT_JS_RUNTIME,
+    remote_components: Optional[Union[str, List[str], tuple]] = DEFAULT_REMOTE_COMPONENTS,
 ) -> List[str]:
     """Search YouTube for ``query`` and download audio for up to ``count`` results.
 
@@ -305,6 +410,10 @@ def search_and_download_many(
             ``youtube.com_cookies.txt``), see ``download_audio`` for details.
             Silently ignored if the file doesn't exist. Used for both the
             flat search step and every individual video download.
+        js_runtime: External JS runtime used to solve YouTube's JS challenge
+            (default: ``"node"``), see ``download_audio`` for details.
+        remote_components: Remote component(s) yt-dlp may fetch on demand
+            (default: ``"ejs:github"``), see ``download_audio`` for details.
 
     Returns:
         A list of paths to the successfully downloaded audio files. May have
@@ -327,6 +436,8 @@ def search_and_download_many(
         audio_format,
         max_duration_seconds=max_duration_seconds,
         cookies_file=cookies_file,
+        js_runtime=js_runtime,
+        remote_components=remote_components,
     )
     # Over-fetch search results: ytsearchN sometimes returns non-video entries
     # (e.g. a channel or "YoutubeTab" page instead of an actual video), which
@@ -460,6 +571,23 @@ def main(argv: Optional[list] = None) -> None:
         f"authenticate as a logged-in browser session (default: {DEFAULT_COOKIES_FILE}, "
         "silently ignored if it doesn't exist). Pass an empty string to disable cookies.",
     )
+    parser.add_argument(
+        "--js-runtime",
+        default=DEFAULT_JS_RUNTIME,
+        help="External JavaScript runtime used by yt-dlp to solve YouTube's JS "
+        f"challenge (default: {DEFAULT_JS_RUNTIME!r}; mirrors yt-dlp's --js-runtimes "
+        "syntax, e.g. 'node', 'deno', 'node:/path/to/node'). Without a working JS "
+        "runtime, downloads from datacenter/cloud IPs (e.g. EC2) are very likely to "
+        "be blocked. Pass an empty string to fall back to yt-dlp's own default (deno).",
+    )
+    parser.add_argument(
+        "--remote-components",
+        default=",".join(DEFAULT_REMOTE_COMPONENTS),
+        help="Comma-separated remote component(s) yt-dlp may fetch on demand "
+        f"(default: {','.join(DEFAULT_REMOTE_COMPONENTS)!r}) -- lets the JS runtime "
+        "above actually solve YouTube's JS challenge by downloading the EJS "
+        "challenge-solver scripts from GitHub. Pass an empty string to disable.",
+    )
     args = parser.parse_args(argv)
 
     query = args.query or input("Wpisz słowo/frazę do wyszukania na YouTube: ").strip()
@@ -467,6 +595,11 @@ def main(argv: Optional[list] = None) -> None:
         raise SystemExit("Nie podano frazy wyszukiwania.")
 
     max_duration_seconds = args.max_duration if args.max_duration and args.max_duration > 0 else None
+    remote_components = (
+        [c.strip() for c in args.remote_components.split(",") if c.strip()]
+        if args.remote_components
+        else None
+    )
 
     if args.count == 1:
         path = search_and_download_audio(
@@ -475,6 +608,8 @@ def main(argv: Optional[list] = None) -> None:
             args.audio_format,
             max_duration_seconds=max_duration_seconds,
             cookies_file=args.cookies_file,
+            js_runtime=args.js_runtime,
+            remote_components=remote_components,
         )
         print(f"Pobrano: {path}")
     else:
@@ -485,6 +620,8 @@ def main(argv: Optional[list] = None) -> None:
             audio_format=args.audio_format,
             max_duration_seconds=max_duration_seconds,
             cookies_file=args.cookies_file,
+            js_runtime=args.js_runtime,
+            remote_components=remote_components,
         )
         print(f"Pobrano {len(paths)}/{args.count} plik(ów) dla zapytania '{query}'.")
 

@@ -1,3 +1,10 @@
+# Needs a recent yt-dlp with EJS (External JS Scripts) support -- i.e. the
+# js_runtimes/remote_components options used to solve YouTube's JS challenge
+# (see downloader/youtube_downloader.py DEFAULT_JS_RUNTIME /
+# DEFAULT_REMOTE_COMPONENTS). Tested against 2026.08.19; older yt-dlp
+# versions may not recognize these ydl_opts keys, so downloads could still
+# get blocked (especially from datacenter IPs like EC2) -- keep yt-dlp
+# up to date (`pip install -U yt-dlp`).
 yt-dlp>=2024.1.1
 librosa>=0.10.0
 soundfile>=0.12.1

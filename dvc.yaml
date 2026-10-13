@@ -29,6 +29,8 @@ stages:
       --count ${download.count}
       --max-duration ${download.max_duration_seconds}
       --cookies-file ${download.cookies_file}
+      --js-runtime ${download.js_runtime}
+      --remote-components ${download.remote_components}
     deps:
       - downloader/youtube_downloader.py
     params:
@@ -38,6 +40,8 @@ stages:
       - download.count
       - download.max_duration_seconds
       - download.cookies_file
+      - download.js_runtime
+      - download.remote_components
     outs:
       # persist: true -- download is network-dependent/non-deterministic and
       # the dataset is meant to grow across runs (matching --skip-download

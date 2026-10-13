@@ -256,6 +256,66 @@ Albo z CLI (`--max-duration` w sekundach; `0` lub wartość ujemna wyłącza lim
 python -m downloader.youtube_downloader "fraza wyszukiwania" --count 200 --max-duration 1800
 ```
 
+### Plik cookies i obsługa JS challenge (ważne przy uruchamianiu z EC2/serwera)
+
+YouTube coraz agresywniej blokuje pobieranie z adresów IP centrów danych
+(np. AWS EC2) — zarówno przez wymóg zalogowania (cookies), jak i przez
+konieczność rozwiązania wyzwania JavaScript (tzw. **EJS**, *External JS
+Scripts*) przy niemal każdym żądaniu. `downloader/youtube_downloader.py`
+obsługuje oba mechanizmy domyślnie, "out of the box":
+
+**1. Plik cookies** (`youtube.com_cookies.txt`) — uwierzytelnia żądania jako
+zalogowana przeglądarka. Wyeksportuj go rozszerzeniem przeglądarki typu
+"Get cookies.txt LOCALLY" i umieść w katalogu roboczym projektu (ścieżka
+domyślna, konfigurowalna przez `--cookies-file` / `cookies_file=...`).
+Plik jest ignorowany przez Git/DVC (zawiera dane uwierzytelniające — patrz
+`.gitignore`). Jeśli plik nie istnieje, pobieranie po prostu przebiega
+anonimowo bez błędu.
+
+**2. Zewnętrzny runtime JavaScript (EJS)** — yt-dlp potrzebuje uruchomić
+skrypty rozwiązujące wyzwanie JS YouTube'a w zewnętrznym silniku JS. Domyślnie
+w tym projekcie używany jest **Node.js** (`js_runtime="node"`, zamiast
+własnego domyślnego wyboru yt-dlp, czyli `deno` — Node jest zwykle łatwiej
+dostępny/instalowalny na typowym obrazie EC2) oraz automatyczne pobieranie
+skryptów rozwiązujących wyzwanie z GitHuba (`remote_components=["ejs:github"]`).
+
+Na instancji EC2 (Amazon Linux/Ubuntu) zainstaluj Node.js, jeśli go nie ma:
+
+```bash
+# Amazon Linux 2023 / RHEL-based:
+sudo dnf install -y nodejs
+# Ubuntu/Debian:
+sudo apt-get install -y nodejs
+```
+
+Bez działającego runtime'u JS pobieranie z adresu IP EC2 może kończyć się
+błędem/blokadą nawet przy poprawnym pliku cookies. Oba mechanizmy (cookies +
+JS runtime) są niezależne i zalecane razem.
+
+Konfigurowalne z CLI:
+
+```bash
+python -m downloader.youtube_downloader "fraza" --count 200 \
+    --cookies-file youtube.com_cookies.txt \
+    --js-runtime node \
+    --remote-components ejs:github
+```
+
+Albo z Pythona:
+
+```python
+paths = search_and_download_many(
+    "fraza", "data/raw", count=200,
+    cookies_file="youtube.com_cookies.txt",
+    js_runtime="node",            # lub "deno:/path/to/deno", "quickjs", "bun"
+    remote_components=["ejs:github"],
+)
+```
+
+Żeby wyłączyć któryś z mechanizmów, przekaż pusty string/`None`
+(`--cookies-file ""`, `--js-runtime ""`, `--remote-components ""`).
+Zob. też [yt-dlp EJS wiki](https://github.com/yt-dlp/yt-dlp/wiki/ejs).
+
 ### Normalizacja spektrogramów: globalna vs lokalna (dlaczego kolejność z segmentacją ma znaczenie)
 
 Pipeline tnie znormalizowane spektrogramy na mniejsze, stałe fragmenty
