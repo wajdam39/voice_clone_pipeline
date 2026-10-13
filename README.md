@@ -29,6 +29,8 @@ voice_clone_pipeline/
 ├── tests/               # testy jednostkowe (pytest), 1:1 z modułami
 ├── configs/
 │   └── config.yaml       # hiperparametry i ścieżki
+├── dvc.yaml              # pipeline DVC (5 etapów, patrz sekcja "Pipeline DVC" niżej)
+├── params.yaml           # parametry pipeline'u DVC specyficzne dla uruchomienia
 ├── requirements.txt
 └── .gitignore
 ```
@@ -547,6 +549,65 @@ Pełna lista opcji: `--raw-dir`, `--processed-dir`, `--normalized-dir`,
 `--max-duration` (limit długości pojedynczego filmu w sekundach, domyślnie
 7200 = 2 godziny; `0` lub ujemna wartość wyłącza limit — patrz sekcja o
 `search_and_download_many` powyżej).
+
+### Pipeline DVC (`dvc.yaml`, `params.yaml`)
+
+Te same 5 etapów co w `scripts/run_pipeline.py` są też zdefiniowane jako
+**pipeline [DVC](https://dvc.org)** (`dvc.yaml`), podzielony na 5 niezależnie
+cache'owalnych stage'ów: `download → preprocess → normalize → train → generate`.
+Dzięki temu `dvc repro` uruchamia **tylko** te etapy, których zależności
+(kod, dane wejściowe lub parametry z `configs/config.yaml`/`params.yaml`)
+faktycznie się zmieniły — reszta jest odtwarzana z cache'u DVC.
+
+**Instalacja i inicjalizacja** (już wykonane w tym repo — `dvc init` tworzy
+katalog `.dvc/`):
+```bash
+pip install dvc
+dvc init
+```
+
+**Uruchomienie całego pipeline'u:**
+```bash
+dvc repro
+```
+
+**Typowe komendy:**
+```bash
+dvc repro train              # uruchom tylko do (włącznie z) etapu train
+dvc repro -f download        # wymuś ponowne uruchomienie etapu download
+dvc dag                      # wizualizacja grafu etapów (ASCII)
+dvc status                   # które etapy są "nieaktualne" i dlaczego
+dvc metrics show             # pokaż metrics/train_metrics.json, data/dataset_stats.json
+dvc metrics diff             # porównaj metryki między commitami/branchami
+dvc plots show               # wykres metrics/train_loss.csv (train_loss vs epoch)
+dvc params diff               # porównaj parametry (configs/config.yaml, params.yaml)
+```
+
+**Eksperymentowanie z nadpisywaniem parametrów** (bez edycji plików):
+```bash
+dvc exp run -S train.num_epochs=5 -S download.query="inna fraza"
+dvc exp show
+```
+
+**Struktura:**
+- `dvc.yaml` — definicja 5 etapów (deps/outs/params/metrics/plots).
+- `params.yaml` — parametry specyficzne dla *uruchomienia* pipeline'u
+  (fraza wyszukiwania YouTube, liczba próbek do wygenerowania), których nie
+  ma w `configs/config.yaml`. Hiperparametry modelu/treningu/preprocessingu
+  są śledzone bezpośrednio z `configs/config.yaml` (sekcja `params:` każdego
+  stage'a wskazuje konkretne klucze, np. `train.num_epochs`).
+- `dvc.lock` — generowany automatycznie przez `dvc repro`/`dvc exp run`;
+  zawiera hashe zależności/wyjść każdego etapu — commituj go do Git.
+- `metrics/train_metrics.json`, `metrics/train_loss.csv`,
+  `data/dataset_stats.json` — pliki metryk/wykresów (`cache: false` w
+  `dvc.yaml`, więc trafiają bezpośrednio do Git zamiast do cache'u DVC —
+  są małe i warto je móc zdiffować commit-do-commitu).
+- Duże/binarne wyjścia (`data/raw`, `data/processed`,
+  `data/processed_normalized`, `checkpoints/model_final.pt`, `output/`)
+  są cache'owane przez DVC i wykluczone z Git (patrz `.gitignore`).
+
+> ⚠️ Ta sama uwaga prawna co dla `scripts/run_pipeline.py` dotyczy etapu
+> `download` w `dvc.yaml` — patrz wyżej.
 
 ### Statystyki zbioru danych (`compute_npy_statistics` / `generate_dataset_statistics`)
 

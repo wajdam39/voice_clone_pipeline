@@ -22,16 +22,27 @@ env/
 # ML / audio artifacts
 checkpoints/
 outputs/
+output/
 logs/
 wandb/
 data/raw/
 data/processed/
+data/processed_normalized/
 pretrained_models/
 *.wav
 *.mp3
 *.flac
 *.pt
 *.ckpt
+
+# DVC
+# NOTE: do NOT ignore dvc.lock, dvc.yaml, params.yaml, .dvc/config, or any
+# `cache: false` metrics/plots files declared in dvc.yaml (e.g.
+# data/dataset_stats.json, metrics/*.json, metrics/*.csv) -- those are meant
+# to be committed to Git so `dvc metrics diff`/`dvc params diff` can compare
+# them across commits. Large/binary DVC outputs (raw audio, checkpoints,
+# generated .wav files, ...) stay cached by DVC and excluded from Git above.
+/.dvc/cache
 
 # OS
 .DS_Store

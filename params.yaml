@@ -1,0 +1,28 @@
+# DVC pipeline parameters (see dvc.yaml).
+#
+# Hyperparameters that already live in configs/config.yaml (preprocessing,
+# segmentation, model, diffusion, train) are tracked directly from that file
+# via each stage's `params:` section in dvc.yaml -- they are NOT duplicated
+# here. This file only holds parameters that are specific to *running* the
+# pipeline (CLI arguments for the download/generate stages) and have no home
+# in configs/config.yaml.
+#
+# Override any value for a single experiment without editing this file via:
+#   dvc exp run -S download.query="some other search phrase" -S download.count=20
+
+download:
+  # Search phrase for the YouTube download stage. IMPORTANT / LEGAL NOTE:
+  # most music on YouTube is copyrighted. Only use content you own the
+  # rights to, that is explicitly licensed for reuse (e.g. Creative
+  # Commons), or your own recordings.
+  query: "royalty free acoustic guitar vocal cover"
+  raw_dir: "data/raw"
+  audio_format: "wav"
+  count: 50
+  # Skip videos longer than this many seconds (default: 7200 = 2 hours).
+  # Use 0 to disable the limit.
+  max_duration_seconds: 7200
+
+generate:
+  num_samples: 1
+  sample_rate: 22050

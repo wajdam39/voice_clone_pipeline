@@ -1,6 +1,6 @@
 downloader:
-  output_dir: "data/raw"
-  audio_format: "wav"
+  output_dir: data/raw
+  audio_format: wav
   sample_rate: 22050
 
 preprocessing:
@@ -18,7 +18,10 @@ segmentation:
 
 model:
   base_channels: 32
-  channel_multipliers: [1, 2, 4]
+  channel_multipliers:
+  - 1
+  - 2
+  - 4
   time_emb_dim: 128
   num_res_blocks: 2
 
@@ -30,25 +33,25 @@ diffusion:
 train:
   batch_size: 16
   learning_rate: 0.0001
-  num_epochs: 100
-  checkpoint_dir: "checkpoints"
-  log_dir: "logs"
+  num_epochs: 1
+  checkpoint_dir: checkpoints
+  log_dir: logs
   wandb:
     # Set to false to disable W&B logging entirely (training still runs
     # normally, metrics are only printed to stdout). Automatically disabled
     # (with a warning) if the optional `wandb` package isn't installed.
     enabled: true
-    project: "voice-clone-diffusion"
-    entity: null
-    run_name: null
+    project: voice-clone-diffusion
+    entity:
+    run_name:
     # "online" (default), "offline" (log locally, no network required) or
     # "disabled" (no-op, same as enabled: false).
-    mode: null
+    mode:
 
 vocoder:
-  type: "hifigan"
+  type: hifigan
   # Pretrained HiFi-GAN (SpeechBrain, Hugging Face Hub), trained on a mel
   # recipe matching preprocessing.spectrogram.audio_to_melspectrogram exactly
   # (sr=22050, n_fft=1024, hop=256, win=1024, n_mels=80, fmin=0, fmax=8000).
-  source: "speechbrain/tts-hifigan-ljspeech"
-  savedir: "pretrained_models/tts-hifigan-ljspeech"
+  source: speechbrain/tts-hifigan-ljspeech
+  savedir: pretrained_models/tts-hifigan-ljspeech

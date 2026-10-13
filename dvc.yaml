@@ -1,0 +1,144 @@
+# DVC pipeline definition for the voice-clone diffusion project.
+#
+# Mirrors the 5 stages of scripts/run_pipeline.py as separate, independently
+# cacheable DVC stages, so `dvc repro` only re-runs what actually changed
+# (e.g. editing models/unet.py reruns training but not download/preprocess;
+# editing configs/config.yaml's `train` section reruns training + generate
+# but not preprocessing).
+#
+# Usage:
+#   dvc repro                 # run/resume the full pipeline
+#   dvc repro train           # run up to (and including) the train stage
+#   dvc repro -f download     # force-rerun download even if unchanged
+#   dvc dag                   # visualize the stage graph
+#   dvc metrics show          # show metrics/train_metrics.json
+#   dvc plots show            # plot metrics/train_loss.csv (loss vs epoch)
+#   dvc exp run -S train.num_epochs=5   # quick experiment w/ a param override
+#
+# IMPORTANT / LEGAL NOTE: most music on YouTube is copyrighted. Only run the
+# download stage on content you own the rights to, that is explicitly
+# licensed for reuse (e.g. Creative Commons), or on your own recordings.
+
+stages:
+  # ---- Stage 1: Pobieranie (download) ----
+  download:
+    cmd: >-
+      python -m downloader.youtube_downloader "${download.query}"
+      --output-dir ${download.raw_dir}
+      --format ${download.audio_format}
+      --count ${download.count}
+      --max-duration ${download.max_duration_seconds}
+    deps:
+      - downloader/youtube_downloader.py
+    params:
+      - download.query
+      - download.raw_dir
+      - download.audio_format
+      - download.count
+      - download.max_duration_seconds
+    outs:
+      # persist: true -- download is network-dependent/non-deterministic and
+      # the dataset is meant to grow across runs (matching --skip-download
+      # in scripts/run_pipeline.py); don't wipe previously downloaded audio
+      # before re-running.
+      - data/raw:
+          persist: true
+
+  # ---- Stage 2: Przygotowanie (preprocess: audio -> mel-spectrogram .npy) ----
+  preprocess:
+    cmd: >-
+      python -m preprocessing.preprocess
+      --input-dir data/raw
+      --output-dir data/processed
+      --config configs/config.yaml
+      --stats-output data/dataset_stats.json
+    deps:
+      - data/raw
+      - preprocessing/preprocess.py
+      - preprocessing/audio_utils.py
+      - preprocessing/spectrogram.py
+    params:
+      - configs/config.yaml:
+          - preprocessing
+    outs:
+      - data/processed
+    metrics:
+      - data/dataset_stats.json:
+          cache: false
+
+  # ---- Stage 2b: Normalizacja globalna (normalize) ----
+  # Split out from `preprocess` as its own stage: normalization must use one
+  # fixed mean/std over the *whole* dataset so it commutes with the later
+  # fixed-window segmentation done by models.dataset.SegmentedVoiceDataset
+  # (see preprocessing/preprocess.py normalize_npy_directory, scope="global").
+  normalize:
+    cmd: >-
+      python -m preprocessing.preprocess
+      --normalize-existing
+      --output-dir data/processed
+      --normalized-dir data/processed_normalized
+      --normalize-scope global
+      --norm-stats-path data/normalization_stats.json
+    deps:
+      - data/processed
+      - preprocessing/preprocess.py
+      - preprocessing/spectrogram.py
+    outs:
+      - data/processed_normalized
+      - data/normalization_stats.json
+
+  # ---- Stage 3: Trenowanie (train) ----
+  train:
+    cmd: python -m models.train --data-dir data/processed_normalized --config configs/config.yaml
+    deps:
+      - data/processed_normalized
+      - models/train.py
+      - models/dataset.py
+      - models/model.py
+      - models/unet.py
+      - models/diffusion.py
+      - models/segmentation.py
+    params:
+      - configs/config.yaml:
+          - segmentation
+          - model
+          - diffusion
+          - train
+    outs:
+      - checkpoints/model_final.pt
+    metrics:
+      - metrics/train_metrics.json:
+          cache: false
+    plots:
+      - metrics/train_loss.csv:
+          x: epoch
+          y: train_loss
+          cache: false
+
+  # ---- Stage 4-5: Generowanie + Przywracanie (generate + vocoder synthesis) ----
+  generate:
+    cmd: >-
+      python -m scripts.generate
+      --checkpoint checkpoints/model_final.pt
+      --config configs/config.yaml
+      --norm-stats-path data/normalization_stats.json
+      --output output/generated.wav
+      --num-samples ${generate.num_samples}
+      --sample-rate ${generate.sample_rate}
+    deps:
+      - checkpoints/model_final.pt
+      - data/normalization_stats.json
+      - scripts/generate.py
+      - models/train.py
+      - vocoder/hifigan.py
+    params:
+      - configs/config.yaml:
+          - model
+          - diffusion
+          - segmentation
+          - vocoder
+      - generate.num_samples
+      - generate.sample_rate
+    outs:
+      - output
+

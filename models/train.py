@@ -9,7 +9,9 @@ loss (see models/diffusion.py).
 from __future__ import annotations
 
 import argparse
+import csv
 import glob
+import json
 import os
 from pathlib import Path
 from typing import Optional
@@ -20,6 +22,9 @@ from models.dataset import SegmentedVoiceDataset
 from models.diffusion import GaussianDiffusion
 from models.model import DiffusionUNet
 from preprocessing.preprocess import safe_print
+
+DEFAULT_METRICS_PATH = "metrics/train_metrics.json"
+DEFAULT_LOSS_PLOT_PATH = "metrics/train_loss.csv"
 
 
 def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
@@ -205,6 +210,16 @@ def train(data_dir: str, config: dict):
         )
         safe_print(f"Zainicjalizowano logowanie W&B (projekt: {wandb_run.project}).", flush=True)
 
+    # ---- Metrics export (for `dvc metrics`/`dvc plots`) ----
+    # Written alongside checkpoints so `dvc.yaml` can declare them as stage
+    # outputs: a per-epoch loss CSV (plottable) and a final-epoch summary
+    # JSON (a DVC "metrics" file, diffable with `dvc metrics diff`).
+    metrics_path = Path(train_cfg.get("metrics_path", DEFAULT_METRICS_PATH))
+    loss_plot_path = Path(train_cfg.get("loss_plot_path", DEFAULT_LOSS_PLOT_PATH))
+    metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    loss_plot_path.parent.mkdir(parents=True, exist_ok=True)
+    epoch_losses: list = []
+
     num_epochs = train_cfg.get("num_epochs", 100)
     # Log progress every `log_every` batches so large datasets (many/long
     # audio files -> many segments -> many batches per epoch) don't make
@@ -240,6 +255,7 @@ def train(data_dir: str, config: dict):
 
             avg_loss = epoch_loss / max(len(loader), 1)
             safe_print(f"Epoch {epoch + 1}/{num_epochs} - loss: {avg_loss:.4f}", flush=True)
+            epoch_losses.append({"epoch": epoch + 1, "train_loss": avg_loss})
 
             if wandb_enabled:
                 wandb_run.log(
@@ -254,6 +270,25 @@ def train(data_dir: str, config: dict):
     finally:
         if wandb_enabled:
             wandb_run.finish()
+
+        # Always flush metrics, even on failure/interruption, so a partial
+        # training run still leaves `dvc repro`/`dvc metrics show` something
+        # to inspect instead of silently producing no metrics outputs.
+        with open(loss_plot_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=["epoch", "train_loss"])
+            writer.writeheader()
+            writer.writerows(epoch_losses)
+
+        summary = {
+            "num_epochs_completed": len(epoch_losses),
+            "final_train_loss": epoch_losses[-1]["train_loss"] if epoch_losses else None,
+            "best_train_loss": min((e["train_loss"] for e in epoch_losses), default=None),
+        }
+        with open(metrics_path, "w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2)
+        safe_print(
+            f"Zapisano metryki treningu do: {metrics_path} i {loss_plot_path}", flush=True
+        )
 
     model.eval()
     return model

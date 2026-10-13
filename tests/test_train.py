@@ -25,6 +25,11 @@ def _write_config(tmp_path, n_mels=16, segment_length=32, wandb_cfg=None):
         "learning_rate": 1e-3,
         "num_epochs": 2,
         "checkpoint_dir": str(tmp_path / "checkpoints"),
+        # Redirect metrics output into tmp_path too, so tests don't write
+        # metrics/train_metrics.json / metrics/train_loss.csv into the real
+        # repo working tree (those are DVC-tracked pipeline outputs).
+        "metrics_path": str(tmp_path / "metrics" / "train_metrics.json"),
+        "loss_plot_path": str(tmp_path / "metrics" / "train_loss.csv"),
     }
     if wandb_cfg is not None:
         train_cfg["wandb"] = wandb_cfg
