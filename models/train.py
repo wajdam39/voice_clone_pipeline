@@ -141,6 +141,11 @@ def train(data_dir: str, config: dict):
     import torch
     from torch.utils.data import DataLoader
 
+    try:
+        import wandb
+    except ImportError:  # pragma: no cover - import guard
+        wandb = None
+
     safe_print(f"Rozpoczynam trening modelu z danymi w: {data_dir}", flush=True)
     file_paths = sorted(glob.glob(os.path.join(data_dir, "*.npy")))
     if not file_paths:
@@ -174,41 +179,81 @@ def train(data_dir: str, config: dict):
     checkpoint_dir = Path(train_cfg.get("checkpoint_dir", "checkpoints"))
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
+    # ---- Weights & Biases (optional experiment tracking) ----
+    # Controlled via the `train.wandb` config section (see configs/config.yaml):
+    #   enabled: true/false (default true if the `wandb` package is installed)
+    #   project / entity / mode ("online"/"offline"/"disabled") / run_name
+    # Disabled automatically (with a warning) if the `wandb` package isn't
+    # installed, so training still runs fine without the optional dependency.
+    wandb_cfg = train_cfg.get("wandb", {})
+    wandb_enabled = wandb_cfg.get("enabled", True) and wandb is not None
+    if wandb_cfg.get("enabled", True) and wandb is None:
+        safe_print(
+            "Pakiet 'wandb' nie jest zainstalowany - logowanie do W&B zostanie pominięte.",
+            flush=True,
+        )
+    wandb_run = None
+    if wandb_enabled:
+        wandb_run = wandb.init(
+            project=wandb_cfg.get("project", "voice-clone-diffusion"),
+            entity=wandb_cfg.get("entity"),
+            name=wandb_cfg.get("run_name"),
+            mode=wandb_cfg.get("mode"),  # None -> wandb's own default ("online",
+            # or the WANDB_MODE env var if set; use "offline"/"disabled" to
+            # avoid requiring network access / an API key).
+            config=config,
+        )
+        safe_print(f"Zainicjalizowano logowanie W&B (projekt: {wandb_run.project}).", flush=True)
+
     num_epochs = train_cfg.get("num_epochs", 100)
     # Log progress every `log_every` batches so large datasets (many/long
     # audio files -> many segments -> many batches per epoch) don't make
     # training look stuck for minutes/hours with no output between epochs.
     log_every = max(1, train_cfg.get("log_every", 50))
     num_batches = len(loader)
-    for epoch in range(num_epochs):
-        model.train()
-        epoch_loss = 0.0
-        for batch_idx, batch in enumerate(loader, start=1):
-            # batch: (batch_size, n_mels, segment_length) -> add channel dim
-            # expected by DiffusionUNet: (batch_size, 1, n_mels, segment_length).
-            x_start = batch.unsqueeze(1).to(device)
+    global_step = 0
+    try:
+        for epoch in range(num_epochs):
+            model.train()
+            epoch_loss = 0.0
+            for batch_idx, batch in enumerate(loader, start=1):
+                # batch: (batch_size, n_mels, segment_length) -> add channel dim
+                # expected by DiffusionUNet: (batch_size, 1, n_mels, segment_length).
+                x_start = batch.unsqueeze(1).to(device)
 
-            optimizer.zero_grad()
-            loss = diffusion.training_loss(x_start)
-            loss.backward()
-            optimizer.step()
-            epoch_loss += loss.item()
+                optimizer.zero_grad()
+                loss = diffusion.training_loss(x_start)
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()
+                global_step += 1
 
-            if batch_idx % log_every == 0 or batch_idx == num_batches:
-                safe_print(
-                    f"  Epoch {epoch + 1}/{num_epochs} - batch {batch_idx}/{num_batches} "
-                    f"- loss: {loss.item():.4f}",
-                    flush=True,
+                if wandb_enabled:
+                    wandb_run.log({"batch_loss": loss.item(), "epoch": epoch + 1}, step=global_step)
+
+                if batch_idx % log_every == 0 or batch_idx == num_batches:
+                    safe_print(
+                        f"  Epoch {epoch + 1}/{num_epochs} - batch {batch_idx}/{num_batches} "
+                        f"- loss: {loss.item():.4f}",
+                        flush=True,
+                    )
+
+            avg_loss = epoch_loss / max(len(loader), 1)
+            safe_print(f"Epoch {epoch + 1}/{num_epochs} - loss: {avg_loss:.4f}", flush=True)
+
+            if wandb_enabled:
+                wandb_run.log(
+                    {"epoch": epoch + 1, "train_loss": avg_loss}, step=global_step
                 )
 
-        avg_loss = epoch_loss / max(len(loader), 1)
-        safe_print(f"Epoch {epoch + 1}/{num_epochs} - loss: {avg_loss:.4f}", flush=True)
+            torch.save(model.state_dict(), checkpoint_dir / f"model_epoch{epoch + 1}.pt")
 
-        torch.save(model.state_dict(), checkpoint_dir / f"model_epoch{epoch + 1}.pt")
-
-    final_checkpoint_path = checkpoint_dir / "model_final.pt"
-    torch.save(model.state_dict(), final_checkpoint_path)
-    safe_print(f"Zapisano finalny checkpoint: {final_checkpoint_path}", flush=True)
+        final_checkpoint_path = checkpoint_dir / "model_final.pt"
+        torch.save(model.state_dict(), final_checkpoint_path)
+        safe_print(f"Zapisano finalny checkpoint: {final_checkpoint_path}", flush=True)
+    finally:
+        if wandb_enabled:
+            wandb_run.finish()
 
     model.eval()
     return model

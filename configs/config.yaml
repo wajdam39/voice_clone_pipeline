@@ -33,6 +33,17 @@ train:
   num_epochs: 100
   checkpoint_dir: "checkpoints"
   log_dir: "logs"
+  wandb:
+    # Set to false to disable W&B logging entirely (training still runs
+    # normally, metrics are only printed to stdout). Automatically disabled
+    # (with a warning) if the optional `wandb` package isn't installed.
+    enabled: true
+    project: "voice-clone-diffusion"
+    entity: null
+    run_name: null
+    # "online" (default), "offline" (log locally, no network required) or
+    # "disabled" (no-op, same as enabled: false).
+    mode: null
 
 vocoder:
   type: "hifigan"

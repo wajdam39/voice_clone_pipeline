@@ -393,6 +393,27 @@ przetworzonych (i opcjonalnie znormalizowanych) plików `.npy`:
 python -m models.train --data-dir data/processed_normalized --config configs/config.yaml
 ```
 
+**Śledzenie eksperymentów (Weights & Biases).** `models/train.py` loguje
+metryki treningowe (`train_loss` na epokę, `batch_loss` na batch) do
+[Weights & Biases](https://wandb.ai), kontrolowane sekcją `train.wandb`
+w `configs/config.yaml`:
+
+```yaml
+train:
+  wandb:
+    enabled: true                     # false wyłącza logowanie (trening działa normalnie)
+    project: "voice-clone-diffusion"
+    entity: null
+    run_name: null
+    mode: null                        # "online" / "offline" / "disabled"
+```
+
+Jeśli pakiet `wandb` nie jest zainstalowany, logowanie jest automatycznie
+pomijane (z ostrzeżeniem w logach), a trening przebiega normalnie bez
+dodatkowej konfiguracji. Przed pierwszym użyciem zaloguj się komendą
+`wandb login` (lub ustaw `mode: "offline"`, żeby logować lokalnie bez
+dostępu do sieci / klucza API).
+
 ### Model dyfuzyjny: 2D U-Net (`models/unet.py`, `models/model.py`, `models/diffusion.py`)
 
 Głównym modelem akustycznym projektu jest **model dyfuzyjny (DDPM)** generujący
