@@ -26,6 +26,32 @@ from typing import Any, List, Optional
 # segments). Pass ``max_duration_seconds=None`` to disable the limit.
 DEFAULT_MAX_VIDEO_DURATION_SECONDS = 2 * 60 * 60  # 2 hours
 
+# Default cookies file (Netscape format, e.g. exported via a browser
+# extension like "Get cookies.txt") passed to yt-dlp as `cookiefile`. Using
+# cookies from a logged-in YouTube session helps avoid bot-detection/
+# age-restriction/region-lock errors that an anonymous request would hit.
+# Only used if the file actually exists at this path (see
+# `_resolve_cookies_file`); harmless/no-op otherwise, so the downloader still
+# works out of the box without it.
+DEFAULT_COOKIES_FILE = "youtube.com_cookies.txt"
+
+
+def _resolve_cookies_file(cookies_file: Optional[str]) -> Optional[str]:
+    """Resolve the cookies file path to pass to yt-dlp, if it exists.
+
+    Args:
+        cookies_file: Path to a Netscape-format cookies file, or ``None``/
+            empty string to disable cookies entirely.
+
+    Returns:
+        The path as a string if it points to an existing file, otherwise
+        ``None`` (so yt-dlp falls back to anonymous requests instead of
+        erroring out on a missing file).
+    """
+    if not cookies_file:
+        return None
+    return cookies_file if os.path.exists(cookies_file) else None
+
 
 def _import_yt_dlp():
     try:
@@ -43,6 +69,7 @@ def _build_ydl_opts(
     audio_format: str,
     filename: Optional[str] = None,
     max_duration_seconds: Optional[int] = DEFAULT_MAX_VIDEO_DURATION_SECONDS,
+    cookies_file: Optional[str] = DEFAULT_COOKIES_FILE,
 ) -> dict:
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
@@ -72,6 +99,15 @@ def _build_ydl_opts(
         # that wasn't known ahead of time (e.g. a direct URL download, or a
         # live/upcoming video whose duration wasn't available during search).
         opts["match_filter"] = _duration_match_filter(max_duration_seconds)
+
+    resolved_cookies_file = _resolve_cookies_file(cookies_file)
+    if resolved_cookies_file is not None:
+        # Netscape-format cookies file (e.g. exported from a logged-in
+        # browser session via a "cookies.txt" extension). Helps yt-dlp avoid
+        # YouTube's bot-detection/"Sign in to confirm you're not a bot"
+        # errors and access age-restricted content. See
+        # https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp
+        opts["cookiefile"] = resolved_cookies_file
 
     return opts
 
@@ -122,6 +158,7 @@ def download_audio(
     audio_format: str = "wav",
     filename: Optional[str] = None,
     max_duration_seconds: Optional[int] = DEFAULT_MAX_VIDEO_DURATION_SECONDS,
+    cookies_file: Optional[str] = DEFAULT_COOKIES_FILE,
 ) -> str:
     """Download the audio track of a YouTube video and save it to disk.
 
@@ -135,6 +172,12 @@ def download_audio(
         max_duration_seconds: Reject the video if its duration exceeds this
             many seconds (default: 2 hours). Pass ``None`` to disable the
             limit.
+        cookies_file: Path to a Netscape-format cookies file (default:
+            ``youtube.com_cookies.txt`` in the current working directory),
+            passed to yt-dlp as ``cookiefile`` to authenticate requests as a
+            logged-in browser session and avoid bot-detection/age/region
+            errors. Silently ignored if the file doesn't exist. Pass
+            ``None``/``""`` to disable cookies entirely.
 
     Returns:
         The absolute path to the downloaded audio file.
@@ -146,7 +189,11 @@ def download_audio(
     """
     yt_dlp = _import_yt_dlp()
     ydl_opts = _build_ydl_opts(
-        output_dir, audio_format, filename, max_duration_seconds=max_duration_seconds
+        output_dir,
+        audio_format,
+        filename,
+        max_duration_seconds=max_duration_seconds,
+        cookies_file=cookies_file,
     )
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -166,6 +213,7 @@ def search_and_download_audio(
     filename: Optional[str] = None,
     max_results: int = 1,
     max_duration_seconds: Optional[int] = DEFAULT_MAX_VIDEO_DURATION_SECONDS,
+    cookies_file: Optional[str] = DEFAULT_COOKIES_FILE,
 ) -> str:
     """Search YouTube for ``query`` and download the audio of the top match.
 
@@ -185,6 +233,9 @@ def search_and_download_audio(
         max_duration_seconds: Reject the top match if its duration exceeds
             this many seconds (default: 2 hours). Pass ``None`` to disable
             the limit.
+        cookies_file: Path to a Netscape-format cookies file (default:
+            ``youtube.com_cookies.txt``), see ``download_audio`` for details.
+            Silently ignored if the file doesn't exist.
 
     Returns:
         The absolute path to the downloaded audio file.
@@ -200,7 +251,11 @@ def search_and_download_audio(
 
     yt_dlp = _import_yt_dlp()
     ydl_opts = _build_ydl_opts(
-        output_dir, audio_format, filename, max_duration_seconds=max_duration_seconds
+        output_dir,
+        audio_format,
+        filename,
+        max_duration_seconds=max_duration_seconds,
+        cookies_file=cookies_file,
     )
     search_term = f"ytsearch{max_results}:{query.strip()}"
 
@@ -221,6 +276,7 @@ def search_and_download_many(
     audio_format: str = "wav",
     skip_errors: bool = True,
     max_duration_seconds: Optional[int] = DEFAULT_MAX_VIDEO_DURATION_SECONDS,
+    cookies_file: Optional[str] = DEFAULT_COOKIES_FILE,
 ) -> List[str]:
     """Search YouTube for ``query`` and download audio for up to ``count`` results.
 
@@ -245,6 +301,10 @@ def search_and_download_many(
             extra network cost) and again at download time as a fallback for
             entries whose duration wasn't known during search. Pass ``None``
             to disable the limit.
+        cookies_file: Path to a Netscape-format cookies file (default:
+            ``youtube.com_cookies.txt``), see ``download_audio`` for details.
+            Silently ignored if the file doesn't exist. Used for both the
+            flat search step and every individual video download.
 
     Returns:
         A list of paths to the successfully downloaded audio files. May have
@@ -263,7 +323,10 @@ def search_and_download_many(
 
     yt_dlp = _import_yt_dlp()
     ydl_opts = _build_ydl_opts(
-        output_dir, audio_format, max_duration_seconds=max_duration_seconds
+        output_dir,
+        audio_format,
+        max_duration_seconds=max_duration_seconds,
+        cookies_file=cookies_file,
     )
     # Over-fetch search results: ytsearchN sometimes returns non-video entries
     # (e.g. a channel or "YoutubeTab" page instead of an actual video), which
@@ -390,6 +453,13 @@ def main(argv: Optional[list] = None) -> None:
         help="Skip videos longer than this many seconds (default: 7200 = 2 hours). "
         "Use 0 or a negative value to disable the limit.",
     )
+    parser.add_argument(
+        "--cookies-file",
+        default=DEFAULT_COOKIES_FILE,
+        help="Path to a Netscape-format cookies file passed to yt-dlp, used to "
+        f"authenticate as a logged-in browser session (default: {DEFAULT_COOKIES_FILE}, "
+        "silently ignored if it doesn't exist). Pass an empty string to disable cookies.",
+    )
     args = parser.parse_args(argv)
 
     query = args.query or input("Wpisz słowo/frazę do wyszukania na YouTube: ").strip()
@@ -404,6 +474,7 @@ def main(argv: Optional[list] = None) -> None:
             args.output_dir,
             args.audio_format,
             max_duration_seconds=max_duration_seconds,
+            cookies_file=args.cookies_file,
         )
         print(f"Pobrano: {path}")
     else:
@@ -413,6 +484,7 @@ def main(argv: Optional[list] = None) -> None:
             count=args.count,
             audio_format=args.audio_format,
             max_duration_seconds=max_duration_seconds,
+            cookies_file=args.cookies_file,
         )
         print(f"Pobrano {len(paths)}/{args.count} plik(ów) dla zapytania '{query}'.")
 

@@ -28,6 +28,7 @@ stages:
       --format ${download.audio_format}
       --count ${download.count}
       --max-duration ${download.max_duration_seconds}
+      --cookies-file ${download.cookies_file}
     deps:
       - downloader/youtube_downloader.py
     params:
@@ -36,6 +37,7 @@ stages:
       - download.audio_format
       - download.count
       - download.max_duration_seconds
+      - download.cookies_file
     outs:
       # persist: true -- download is network-dependent/non-deterministic and
       # the dataset is meant to grow across runs (matching --skip-download

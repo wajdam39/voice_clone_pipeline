@@ -2,6 +2,10 @@ downloader:
   output_dir: data/raw
   audio_format: wav
   sample_rate: 22050
+  # Netscape-format cookies file passed to yt-dlp (authenticates requests as
+  # a logged-in browser session, helping avoid bot-detection/age/region
+  # errors). Silently ignored if the file doesn't exist.
+  cookies_file: youtube.com_cookies.txt
 
 preprocessing:
   target_sample_rate: 22050

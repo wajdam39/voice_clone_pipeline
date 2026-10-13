@@ -37,6 +37,7 @@ from typing import Optional
 import yaml
 
 from downloader.youtube_downloader import (
+    DEFAULT_COOKIES_FILE,
     DEFAULT_MAX_VIDEO_DURATION_SECONDS,
     search_and_download_many,
 )
@@ -75,6 +76,7 @@ def run_pipeline(
     skip_errors: bool = True,
     num_epochs_override: Optional[int] = None,
     max_duration_seconds: Optional[int] = DEFAULT_MAX_VIDEO_DURATION_SECONDS,
+    cookies_file: Optional[str] = DEFAULT_COOKIES_FILE,
 ) -> Optional[list]:
     """Run the full pipeline: download -> preprocess -> train -> generate -> restore.
 
@@ -107,6 +109,10 @@ def run_pipeline(
             aborting the whole batch (download stage only).
         max_duration_seconds: Skip videos longer than this many seconds
             (default: 2 hours). Pass ``None`` to disable the limit.
+        cookies_file: Path to a Netscape-format cookies file passed to
+            yt-dlp (download stage only), used to authenticate requests as
+            a logged-in browser session (default: ``youtube.com_cookies.txt``,
+            silently ignored if it doesn't exist).
 
     Returns:
         A list with the path to the generated ``.wav`` file (or multiple, if
@@ -125,6 +131,7 @@ def run_pipeline(
             audio_format=audio_format,
             skip_errors=skip_errors,
             max_duration_seconds=max_duration_seconds,
+            cookies_file=cookies_file,
         )
         safe_print(f"[1/5] Pobrano {len(downloaded_paths)}/{count} plik(ów) do '{raw_dir}'.")
     else:
@@ -272,6 +279,13 @@ def main(argv: Optional[list] = None) -> None:
         help="Skip videos longer than this many seconds (default: 7200 = 2 hours). "
         "Use 0 or a negative value to disable the limit.",
     )
+    parser.add_argument(
+        "--cookies-file",
+        default=DEFAULT_COOKIES_FILE,
+        help="Path to a Netscape-format cookies file passed to yt-dlp for the "
+        f"download stage (default: {DEFAULT_COOKIES_FILE}, silently ignored if "
+        "it doesn't exist). Pass an empty string to disable cookies.",
+    )
     args = parser.parse_args(argv)
 
     max_duration_seconds = args.max_duration if args.max_duration and args.max_duration > 0 else None
@@ -293,6 +307,7 @@ def main(argv: Optional[list] = None) -> None:
         skip_errors=not args.fail_fast,
         num_epochs_override=args.epochs,
         max_duration_seconds=max_duration_seconds,
+        cookies_file=args.cookies_file,
     )
 
 

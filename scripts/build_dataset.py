@@ -18,6 +18,7 @@ import argparse
 from typing import List, Optional
 
 from downloader.youtube_downloader import (
+    DEFAULT_COOKIES_FILE,
     DEFAULT_MAX_VIDEO_DURATION_SECONDS,
     search_and_download_many,
 )
@@ -40,6 +41,7 @@ def build_dataset(
     config_path: str = DEFAULT_CONFIG_PATH,
     skip_errors: bool = True,
     max_duration_seconds: Optional[int] = DEFAULT_MAX_VIDEO_DURATION_SECONDS,
+    cookies_file: Optional[str] = DEFAULT_COOKIES_FILE,
 ) -> List[str]:
     """Download ``count`` tracks for ``query`` and preprocess all of them.
 
@@ -57,6 +59,10 @@ def build_dataset(
             ``downloader.youtube_downloader.search_and_download_many``).
         max_duration_seconds: Skip videos longer than this many seconds
             (default: 2 hours). Pass ``None`` to disable the limit.
+        cookies_file: Path to a Netscape-format cookies file passed to
+            yt-dlp, used to authenticate requests as a logged-in browser
+            session (default: ``youtube.com_cookies.txt``, silently ignored
+            if it doesn't exist).
 
     Returns:
         A list of paths to the saved ``.npy`` mel-spectrogram files.
@@ -69,6 +75,7 @@ def build_dataset(
         audio_format=audio_format,
         skip_errors=skip_errors,
         max_duration_seconds=max_duration_seconds,
+        cookies_file=cookies_file,
     )
     safe_print(f"Pobrano {len(downloaded_paths)}/{count} plik(ów) do '{raw_dir}'.")
 
@@ -138,6 +145,13 @@ def main(argv: Optional[list] = None) -> None:
         help="Skip videos longer than this many seconds (default: 7200 = 2 hours). "
         "Use 0 or a negative value to disable the limit.",
     )
+    parser.add_argument(
+        "--cookies-file",
+        default=DEFAULT_COOKIES_FILE,
+        help="Path to a Netscape-format cookies file passed to yt-dlp "
+        f"(default: {DEFAULT_COOKIES_FILE}, silently ignored if it doesn't "
+        "exist). Pass an empty string to disable cookies.",
+    )
     args = parser.parse_args(argv)
 
     max_duration_seconds = args.max_duration if args.max_duration and args.max_duration > 0 else None
@@ -151,6 +165,7 @@ def main(argv: Optional[list] = None) -> None:
         config_path=args.config,
         skip_errors=not args.fail_fast,
         max_duration_seconds=max_duration_seconds,
+        cookies_file=args.cookies_file,
     )
 
 

@@ -22,6 +22,12 @@ download:
   # Skip videos longer than this many seconds (default: 7200 = 2 hours).
   # Use 0 to disable the limit.
   max_duration_seconds: 7200
+  # Netscape-format cookies file passed to yt-dlp (authenticates requests as
+  # a logged-in browser session, helping avoid bot-detection/age/region
+  # errors). Silently ignored if the file doesn't exist. NOT committed to
+  # Git (see .gitignore) -- export your own via a browser extension like
+  # "Get cookies.txt LOCALLY" and place it at this path.
+  cookies_file: "youtube.com_cookies.txt"
 
 generate:
   num_samples: 1

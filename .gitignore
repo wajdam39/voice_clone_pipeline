@@ -18,6 +18,7 @@ env/
 
 # Environment variables / secrets
 .env
+*cookies*.txt
 
 # ML / audio artifacts
 checkpoints/
