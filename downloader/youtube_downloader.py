@@ -67,6 +67,17 @@ DEFAULT_REMOTE_COMPONENTS = ("ejs:github",)
 DEFAULT_SLEEP_INTERVAL_SECONDS = 5
 DEFAULT_MAX_SLEEP_INTERVAL_SECONDS = 15
 
+# Which YouTube "player client(s)" yt-dlp impersonates when requesting
+# playback data, passed via extractor_args -> youtube -> player_client. The
+# default web/mweb clients are the ones most tightly tied to the JS
+# challenge/PO Token requirements and the first to get throttled/blocked on
+# datacenter IPs (e.g. EC2). "ios" and "tv_embedded" are mobile/TV clients
+# that historically don't require solving YouTube's JS challenge at all and
+# are far less likely to be blocked, making them a good complement to (not
+# a replacement for) the cookies/js_runtime/remote_components settings
+# above. See https://github.com/yt-dlp/yt-dlp/wiki/Extractors#youtube
+DEFAULT_PLAYER_CLIENTS = ("ios", "tv_embedded")
+
 
 def _resolve_js_runtimes(
     js_runtime: Optional[str],
@@ -112,6 +123,28 @@ def _resolve_remote_components(
     return list(remote_components)
 
 
+def _resolve_player_clients(
+    player_clients: Optional[Union[str, List[str], tuple]],
+) -> Optional[dict]:
+    """Build the ``extractor_args`` dict yt-dlp's Python API expects for
+    overriding the YouTube player client(s).
+
+    Args:
+        player_clients: A single client name (e.g. ``"ios"``), an iterable
+            of client names (e.g. ``["ios", "tv_embedded"]``), or
+            ``None``/empty to disable (falls back to yt-dlp's own default
+            client selection).
+
+    Returns:
+        An ``{"youtube": {"player_client": [...]}}`` dict as expected by
+        ``YoutubeDL(params={"extractor_args": ...})``, or ``None``.
+    """
+    if not player_clients:
+        return None
+    clients = [player_clients] if isinstance(player_clients, str) else list(player_clients)
+    return {"youtube": {"player_client": clients}}
+
+
 def _resolve_cookies_file(cookies_file: Optional[str]) -> Optional[str]:
     """Resolve the cookies file path to pass to yt-dlp, if it exists.
 
@@ -150,6 +183,7 @@ def _build_ydl_opts(
     remote_components: Optional[Union[str, List[str], tuple]] = DEFAULT_REMOTE_COMPONENTS,
     sleep_interval: Optional[float] = DEFAULT_SLEEP_INTERVAL_SECONDS,
     max_sleep_interval: Optional[float] = DEFAULT_MAX_SLEEP_INTERVAL_SECONDS,
+    player_clients: Optional[Union[str, List[str], tuple]] = DEFAULT_PLAYER_CLIENTS,
 ) -> dict:
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
@@ -212,6 +246,15 @@ def _build_ydl_opts(
         if max_sleep_interval is not None:
             opts["max_sleep_interval"] = max_sleep_interval
 
+    resolved_player_clients = _resolve_player_clients(player_clients)
+    if resolved_player_clients is not None:
+        # Forces yt-dlp's YouTube extractor to use specific player client(s)
+        # (e.g. "ios", "tv_embedded") instead of its own default selection.
+        # Mobile/TV clients historically don't require solving YouTube's JS
+        # challenge and are less likely to be rate-limited/blocked from
+        # datacenter IPs (e.g. EC2), complementing cookies/js_runtime above.
+        opts["extractor_args"] = resolved_player_clients
+
     return opts
 
 
@@ -266,6 +309,7 @@ def download_audio(
     remote_components: Optional[Union[str, List[str], tuple]] = DEFAULT_REMOTE_COMPONENTS,
     sleep_interval: Optional[float] = DEFAULT_SLEEP_INTERVAL_SECONDS,
     max_sleep_interval: Optional[float] = DEFAULT_MAX_SLEEP_INTERVAL_SECONDS,
+    player_clients: Optional[Union[str, List[str], tuple]] = DEFAULT_PLAYER_CLIENTS,
 ) -> str:
     """Download the audio track of a YouTube video and save it to disk.
 
@@ -304,6 +348,13 @@ def download_audio(
         max_sleep_interval: Maximum number of seconds yt-dlp sleeps before
             each download (default: 15). Only used if ``sleep_interval`` is
             also set.
+        player_clients: YouTube player client(s) yt-dlp should impersonate
+            (default: ``("ios", "tv_embedded")``), passed via
+            ``extractor_args -> youtube -> player_client``. Mobile/TV
+            clients historically don't require solving YouTube's JS
+            challenge and are less likely to be blocked from datacenter
+            IPs. Pass ``None``/empty to fall back to yt-dlp's own default
+            client selection.
 
     Returns:
         The absolute path to the downloaded audio file.
@@ -324,6 +375,7 @@ def download_audio(
         remote_components=remote_components,
         sleep_interval=sleep_interval,
         max_sleep_interval=max_sleep_interval,
+        player_clients=player_clients,
     )
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -348,6 +400,7 @@ def search_and_download_audio(
     remote_components: Optional[Union[str, List[str], tuple]] = DEFAULT_REMOTE_COMPONENTS,
     sleep_interval: Optional[float] = DEFAULT_SLEEP_INTERVAL_SECONDS,
     max_sleep_interval: Optional[float] = DEFAULT_MAX_SLEEP_INTERVAL_SECONDS,
+    player_clients: Optional[Union[str, List[str], tuple]] = DEFAULT_PLAYER_CLIENTS,
 ) -> str:
     """Search YouTube for ``query`` and download the audio of the top match.
 
@@ -378,6 +431,8 @@ def search_and_download_audio(
             (default: 5), see ``download_audio`` for details.
         max_sleep_interval: Maximum seconds yt-dlp sleeps before each
             download (default: 15), see ``download_audio`` for details.
+        player_clients: YouTube player client(s) to impersonate (default:
+            ``("ios", "tv_embedded")``), see ``download_audio`` for details.
 
     Returns:
         The absolute path to the downloaded audio file.
@@ -402,6 +457,7 @@ def search_and_download_audio(
         remote_components=remote_components,
         sleep_interval=sleep_interval,
         max_sleep_interval=max_sleep_interval,
+        player_clients=player_clients,
     )
     search_term = f"ytsearch{max_results}:{query.strip()}"
 
@@ -427,6 +483,7 @@ def search_and_download_many(
     remote_components: Optional[Union[str, List[str], tuple]] = DEFAULT_REMOTE_COMPONENTS,
     sleep_interval: Optional[float] = DEFAULT_SLEEP_INTERVAL_SECONDS,
     max_sleep_interval: Optional[float] = DEFAULT_MAX_SLEEP_INTERVAL_SECONDS,
+    player_clients: Optional[Union[str, List[str], tuple]] = DEFAULT_PLAYER_CLIENTS,
 ) -> List[str]:
     """Search YouTube for ``query`` and download audio for up to ``count`` results.
 
@@ -467,6 +524,8 @@ def search_and_download_many(
             the requests.
         max_sleep_interval: Maximum seconds yt-dlp sleeps before each
             download (default: 15), see ``download_audio`` for details.
+        player_clients: YouTube player client(s) to impersonate (default:
+            ``("ios", "tv_embedded")``), see ``download_audio`` for details.
 
     Returns:
         A list of paths to the successfully downloaded audio files. May have
@@ -491,6 +550,7 @@ def search_and_download_many(
         cookies_file=cookies_file,
         js_runtime=js_runtime,
         remote_components=remote_components,
+        player_clients=player_clients,
         sleep_interval=sleep_interval,
         max_sleep_interval=max_sleep_interval,
     )
@@ -661,6 +721,16 @@ def main(argv: Optional[list] = None) -> None:
         f"(default: {DEFAULT_MAX_SLEEP_INTERVAL_SECONDS}). Only used if "
         "--sleep-interval is also set (non-negative).",
     )
+    parser.add_argument(
+        "--player-clients",
+        default=",".join(DEFAULT_PLAYER_CLIENTS),
+        help="Comma-separated YouTube player client(s) yt-dlp should impersonate "
+        f"(default: {','.join(DEFAULT_PLAYER_CLIENTS)!r}), passed via extractor_args "
+        "-> youtube -> player_client. Mobile/TV clients historically don't require "
+        "solving YouTube's JS challenge and are less likely to be blocked from "
+        "datacenter IPs (e.g. EC2). Pass an empty string to fall back to yt-dlp's "
+        "own default client selection.",
+    )
     args = parser.parse_args(argv)
 
     query = args.query or input("Wpisz słowo/frazę do wyszukania na YouTube: ").strip()
@@ -671,6 +741,11 @@ def main(argv: Optional[list] = None) -> None:
     remote_components = (
         [c.strip() for c in args.remote_components.split(",") if c.strip()]
         if args.remote_components
+        else None
+    )
+    player_clients = (
+        [c.strip() for c in args.player_clients.split(",") if c.strip()]
+        if args.player_clients
         else None
     )
     sleep_interval = args.sleep_interval if args.sleep_interval is not None and args.sleep_interval >= 0 else None
@@ -691,6 +766,7 @@ def main(argv: Optional[list] = None) -> None:
             remote_components=remote_components,
             sleep_interval=sleep_interval,
             max_sleep_interval=max_sleep_interval,
+            player_clients=player_clients,
         )
         print(f"Pobrano: {path}")
     else:
@@ -705,6 +781,7 @@ def main(argv: Optional[list] = None) -> None:
             remote_components=remote_components,
             sleep_interval=sleep_interval,
             max_sleep_interval=max_sleep_interval,
+            player_clients=player_clients,
         )
         print(f"Pobrano {len(paths)}/{args.count} plik(ów) dla zapytania '{query}'.")
 

@@ -41,6 +41,7 @@ from downloader.youtube_downloader import (
     DEFAULT_JS_RUNTIME,
     DEFAULT_MAX_SLEEP_INTERVAL_SECONDS,
     DEFAULT_MAX_VIDEO_DURATION_SECONDS,
+    DEFAULT_PLAYER_CLIENTS,
     DEFAULT_REMOTE_COMPONENTS,
     DEFAULT_SLEEP_INTERVAL_SECONDS,
     search_and_download_many,
@@ -85,6 +86,7 @@ def run_pipeline(
     remote_components=DEFAULT_REMOTE_COMPONENTS,
     sleep_interval: Optional[float] = DEFAULT_SLEEP_INTERVAL_SECONDS,
     max_sleep_interval: Optional[float] = DEFAULT_MAX_SLEEP_INTERVAL_SECONDS,
+    player_clients=DEFAULT_PLAYER_CLIENTS,
 ) -> Optional[list]:
     """Run the full pipeline: download -> preprocess -> train -> generate -> restore.
 
@@ -133,6 +135,11 @@ def run_pipeline(
             of YouTube's rate-limiting/bot-detection.
         max_sleep_interval: Maximum seconds yt-dlp sleeps before each
             download (download stage only, default: 15).
+        player_clients: YouTube player client(s) yt-dlp should impersonate
+            (download stage only, default: ``("ios", "tv_embedded")``).
+            Mobile/TV clients historically don't require solving YouTube's
+            JS challenge and are less likely to be blocked from datacenter
+            IPs (e.g. EC2).
 
     Returns:
         A list with the path to the generated ``.wav`` file (or multiple, if
@@ -156,6 +163,7 @@ def run_pipeline(
             remote_components=remote_components,
             sleep_interval=sleep_interval,
             max_sleep_interval=max_sleep_interval,
+            player_clients=player_clients,
         )
         safe_print(f"[1/5] Pobrano {len(downloaded_paths)}/{count} plik(ów) do '{raw_dir}'.")
     else:
@@ -344,6 +352,15 @@ def main(argv: Optional[list] = None) -> None:
         f"stage only (default: {DEFAULT_MAX_SLEEP_INTERVAL_SECONDS}). Only "
         "used if --sleep-interval is also set (non-negative).",
     )
+    parser.add_argument(
+        "--player-clients",
+        default=",".join(DEFAULT_PLAYER_CLIENTS),
+        help="Comma-separated YouTube player client(s) yt-dlp should impersonate, "
+        f"download stage only (default: {','.join(DEFAULT_PLAYER_CLIENTS)!r}). "
+        "Mobile/TV clients historically don't require solving YouTube's JS "
+        "challenge and are less likely to be blocked from datacenter IPs "
+        "(e.g. EC2). Pass an empty string to fall back to yt-dlp's own default.",
+    )
     args = parser.parse_args(argv)
 
     max_duration_seconds = args.max_duration if args.max_duration and args.max_duration > 0 else None
@@ -356,6 +373,11 @@ def main(argv: Optional[list] = None) -> None:
     max_sleep_interval = (
         args.max_sleep_interval
         if sleep_interval is not None and args.max_sleep_interval is not None and args.max_sleep_interval >= 0
+        else None
+    )
+    player_clients = (
+        [c.strip() for c in args.player_clients.split(",") if c.strip()]
+        if args.player_clients
         else None
     )
 
@@ -381,6 +403,7 @@ def main(argv: Optional[list] = None) -> None:
         remote_components=remote_components,
         sleep_interval=sleep_interval,
         max_sleep_interval=max_sleep_interval,
+        player_clients=player_clients,
     )
 
 

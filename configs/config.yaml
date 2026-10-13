@@ -22,6 +22,14 @@ downloader:
   # downloading many videos back-to-back from one (likely datacenter) IP.
   sleep_interval: 5
   max_sleep_interval: 15
+  # YouTube player client(s) yt-dlp impersonates (extractor_args -> youtube
+  # -> player_client). Mobile/TV clients ("ios", "tv_embedded") historically
+  # don't require solving YouTube's JS challenge at all and are less likely
+  # to be blocked from datacenter/cloud IPs (e.g. AWS EC2), complementing
+  # (not replacing) cookies_file/js_runtime/remote_components above.
+  player_clients:
+  - ios
+  - tv_embedded
 
 preprocessing:
   target_sample_rate: 22050

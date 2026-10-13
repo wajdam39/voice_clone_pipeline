@@ -299,6 +299,15 @@ szczególne znaczenie przy `search_and_download_many` (wiele pobrań z rzędu
 z tego samego adresu IP) — bez tej przerwy YouTube znacznie częściej
 nakłada rate-limiting/blokadę, zwłaszcza z adresów centrów danych.
 
+**4. Klienci odtwarzacza YouTube (`player_clients`)** — yt-dlp domyślnie
+udaje klienta webowego/mobilnej strony (`web`/`mweb`), który jest najściślej
+powiązany z wymogiem rozwiązania wyzwania JS i PO Token, i najszybciej trafia
+na throttling/blokadę z adresów centrów danych. Domyślnie w tym projekcie
+wymuszane są klienci **`ios`** i **`tv_embedded`** (`extractor_args` →
+`youtube` → `player_client`), którzy historycznie nie wymagają w ogóle
+rozwiązywania wyzwania JS i rzadziej są blokowani — to uzupełnienie (nie
+zamiennik) mechanizmów cookies/JS runtime powyżej.
+
 Konfigurowalne z CLI:
 
 ```bash
@@ -307,7 +316,8 @@ python -m downloader.youtube_downloader "fraza" --count 200 \
     --js-runtime node \
     --remote-components ejs:github \
     --sleep-interval 5 \
-    --max-sleep-interval 15
+    --max-sleep-interval 15 \
+    --player-clients ios,tv_embedded
 ```
 
 Albo z Pythona:
@@ -320,13 +330,15 @@ paths = search_and_download_many(
     remote_components=["ejs:github"],
     sleep_interval=5,             # minimalna przerwa (sekundy) przed każdym pobraniem
     max_sleep_interval=15,        # maksymalna przerwa (losowa wartość z przedziału)
+    player_clients=["ios", "tv_embedded"],
 )
 ```
 
 Żeby wyłączyć któryś z mechanizmów, przekaż pusty string/`None`/wartość
 ujemną (`--cookies-file ""`, `--js-runtime ""`, `--remote-components ""`,
-`--sleep-interval -1`). Zob. też
-[yt-dlp EJS wiki](https://github.com/yt-dlp/yt-dlp/wiki/ejs).
+`--sleep-interval -1`, `--player-clients ""`). Zob. też
+[yt-dlp EJS wiki](https://github.com/yt-dlp/yt-dlp/wiki/ejs) oraz
+[yt-dlp YouTube extractor docs](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#youtube).
 
 ### Normalizacja spektrogramów: globalna vs lokalna (dlaczego kolejność z segmentacją ma znaczenie)
 

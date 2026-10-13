@@ -33,6 +33,7 @@ stages:
       --remote-components ${download.remote_components}
       --sleep-interval ${download.sleep_interval}
       --max-sleep-interval ${download.max_sleep_interval}
+      --player-clients ${download.player_clients}
     deps:
       - downloader/youtube_downloader.py
     params:
@@ -46,6 +47,7 @@ stages:
       - download.remote_components
       - download.sleep_interval
       - download.max_sleep_interval
+      - download.player_clients
     outs:
       # persist: true -- download is network-dependent/non-deterministic and
       # the dataset is meant to grow across runs (matching --skip-download

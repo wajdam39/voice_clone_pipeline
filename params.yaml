@@ -45,6 +45,12 @@ download:
   # downloading many videos back-to-back from one (likely datacenter) IP.
   sleep_interval: 5
   max_sleep_interval: 15
+  # Comma-separated YouTube player client(s) yt-dlp impersonates. Mobile/TV
+  # clients ("ios", "tv_embedded") historically don't require solving
+  # YouTube's JS challenge and are less likely to be blocked from
+  # datacenter/cloud IPs (e.g. AWS EC2), complementing (not replacing) the
+  # cookies/js_runtime/remote_components settings above.
+  player_clients: "ios,tv_embedded"
 
 generate:
   num_samples: 1
