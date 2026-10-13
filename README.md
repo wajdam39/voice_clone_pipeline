@@ -292,13 +292,22 @@ Bez działającego runtime'u JS pobieranie z adresu IP EC2 może kończyć się
 błędem/blokadą nawet przy poprawnym pliku cookies. Oba mechanizmy (cookies +
 JS runtime) są niezależne i zalecane razem.
 
+**3. Przerwa między pobraniami (`sleep_interval`/`max_sleep_interval`)** —
+przed każdym pobraniem yt-dlp czeka losowy czas (domyślnie od 5 do 15
+sekund), żeby ruch nie wyglądał jak zautomatyzowany scraper. Ma to
+szczególne znaczenie przy `search_and_download_many` (wiele pobrań z rzędu
+z tego samego adresu IP) — bez tej przerwy YouTube znacznie częściej
+nakłada rate-limiting/blokadę, zwłaszcza z adresów centrów danych.
+
 Konfigurowalne z CLI:
 
 ```bash
 python -m downloader.youtube_downloader "fraza" --count 200 \
     --cookies-file youtube.com_cookies.txt \
     --js-runtime node \
-    --remote-components ejs:github
+    --remote-components ejs:github \
+    --sleep-interval 5 \
+    --max-sleep-interval 15
 ```
 
 Albo z Pythona:
@@ -309,12 +318,15 @@ paths = search_and_download_many(
     cookies_file="youtube.com_cookies.txt",
     js_runtime="node",            # lub "deno:/path/to/deno", "quickjs", "bun"
     remote_components=["ejs:github"],
+    sleep_interval=5,             # minimalna przerwa (sekundy) przed każdym pobraniem
+    max_sleep_interval=15,        # maksymalna przerwa (losowa wartość z przedziału)
 )
 ```
 
-Żeby wyłączyć któryś z mechanizmów, przekaż pusty string/`None`
-(`--cookies-file ""`, `--js-runtime ""`, `--remote-components ""`).
-Zob. też [yt-dlp EJS wiki](https://github.com/yt-dlp/yt-dlp/wiki/ejs).
+Żeby wyłączyć któryś z mechanizmów, przekaż pusty string/`None`/wartość
+ujemną (`--cookies-file ""`, `--js-runtime ""`, `--remote-components ""`,
+`--sleep-interval -1`). Zob. też
+[yt-dlp EJS wiki](https://github.com/yt-dlp/yt-dlp/wiki/ejs).
 
 ### Normalizacja spektrogramów: globalna vs lokalna (dlaczego kolejność z segmentacją ma znaczenie)
 

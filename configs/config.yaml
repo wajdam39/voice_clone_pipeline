@@ -15,6 +15,13 @@ downloader:
   # so js_runtime above has something to execute.
   remote_components:
   - ejs:github
+  # Random delay (seconds) yt-dlp waits before each download, uniformly
+  # chosen between sleep_interval and max_sleep_interval. Spaces out
+  # requests so traffic looks less automated, reducing the odds of
+  # YouTube's rate-limiting/bot-detection -- especially important when
+  # downloading many videos back-to-back from one (likely datacenter) IP.
+  sleep_interval: 5
+  max_sleep_interval: 15
 
 preprocessing:
   target_sample_rate: 22050

@@ -20,8 +20,10 @@ from typing import List, Optional
 from downloader.youtube_downloader import (
     DEFAULT_COOKIES_FILE,
     DEFAULT_JS_RUNTIME,
+    DEFAULT_MAX_SLEEP_INTERVAL_SECONDS,
     DEFAULT_MAX_VIDEO_DURATION_SECONDS,
     DEFAULT_REMOTE_COMPONENTS,
+    DEFAULT_SLEEP_INTERVAL_SECONDS,
     search_and_download_many,
 )
 from preprocessing.preprocess import (
@@ -46,6 +48,8 @@ def build_dataset(
     cookies_file: Optional[str] = DEFAULT_COOKIES_FILE,
     js_runtime: Optional[str] = DEFAULT_JS_RUNTIME,
     remote_components=DEFAULT_REMOTE_COMPONENTS,
+    sleep_interval: Optional[float] = DEFAULT_SLEEP_INTERVAL_SECONDS,
+    max_sleep_interval: Optional[float] = DEFAULT_MAX_SLEEP_INTERVAL_SECONDS,
 ) -> List[str]:
     """Download ``count`` tracks for ``query`` and preprocess all of them.
 
@@ -73,6 +77,12 @@ def build_dataset(
             to be blocked.
         remote_components: Remote component(s) yt-dlp may fetch on demand
             (default: ``"ejs:github"``).
+        sleep_interval: Minimum seconds yt-dlp sleeps before each download
+            (default: 5). Combined with ``max_sleep_interval``, spaces out
+            requests to reduce the odds of YouTube's rate-limiting/
+            bot-detection.
+        max_sleep_interval: Maximum seconds yt-dlp sleeps before each
+            download (default: 15).
 
     Returns:
         A list of paths to the saved ``.npy`` mel-spectrogram files.
@@ -88,6 +98,8 @@ def build_dataset(
         cookies_file=cookies_file,
         js_runtime=js_runtime,
         remote_components=remote_components,
+        sleep_interval=sleep_interval,
+        max_sleep_interval=max_sleep_interval,
     )
     safe_print(f"Pobrano {len(downloaded_paths)}/{count} plik(ów) do '{raw_dir}'.")
 
@@ -181,12 +193,35 @@ def main(argv: Optional[list] = None) -> None:
         "above can actually solve YouTube's JS challenge. Pass an empty string "
         "to disable.",
     )
+    parser.add_argument(
+        "--sleep-interval",
+        type=float,
+        default=DEFAULT_SLEEP_INTERVAL_SECONDS,
+        help="Minimum seconds yt-dlp sleeps before each download "
+        f"(default: {DEFAULT_SLEEP_INTERVAL_SECONDS}). Combined with "
+        "--max-sleep-interval, reduces the odds of YouTube's "
+        "rate-limiting/bot-detection. Pass a negative value to disable.",
+    )
+    parser.add_argument(
+        "--max-sleep-interval",
+        type=float,
+        default=DEFAULT_MAX_SLEEP_INTERVAL_SECONDS,
+        help="Maximum seconds yt-dlp sleeps before each download "
+        f"(default: {DEFAULT_MAX_SLEEP_INTERVAL_SECONDS}). Only used if "
+        "--sleep-interval is also set (non-negative).",
+    )
     args = parser.parse_args(argv)
 
     max_duration_seconds = args.max_duration if args.max_duration and args.max_duration > 0 else None
     remote_components = (
         [c.strip() for c in args.remote_components.split(",") if c.strip()]
         if args.remote_components
+        else None
+    )
+    sleep_interval = args.sleep_interval if args.sleep_interval is not None and args.sleep_interval >= 0 else None
+    max_sleep_interval = (
+        args.max_sleep_interval
+        if sleep_interval is not None and args.max_sleep_interval is not None and args.max_sleep_interval >= 0
         else None
     )
 
@@ -202,6 +237,8 @@ def main(argv: Optional[list] = None) -> None:
         cookies_file=args.cookies_file,
         js_runtime=args.js_runtime,
         remote_components=remote_components,
+        sleep_interval=sleep_interval,
+        max_sleep_interval=max_sleep_interval,
     )
 
 

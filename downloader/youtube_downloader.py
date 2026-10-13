@@ -57,6 +57,16 @@ DEFAULT_JS_RUNTIME = "node"
 # to disable (e.g. if GitHub is not reachable from your network).
 DEFAULT_REMOTE_COMPONENTS = ("ejs:github",)
 
+# Random delay (in seconds, uniformly between these two bounds) that yt-dlp
+# waits before each download. Spacing out requests like this makes traffic
+# look less like an automated scraper and reduces the odds of triggering
+# YouTube's rate-limiting/bot-detection -- especially important when
+# downloading many videos back-to-back (e.g. search_and_download_many) from
+# a single datacenter IP (e.g. EC2), which is scrutinized far more than a
+# residential IP would be. Set either to ``None`` to disable sleeping.
+DEFAULT_SLEEP_INTERVAL_SECONDS = 5
+DEFAULT_MAX_SLEEP_INTERVAL_SECONDS = 15
+
 
 def _resolve_js_runtimes(
     js_runtime: Optional[str],
@@ -138,6 +148,8 @@ def _build_ydl_opts(
     cookies_file: Optional[str] = DEFAULT_COOKIES_FILE,
     js_runtime: Optional[str] = DEFAULT_JS_RUNTIME,
     remote_components: Optional[Union[str, List[str], tuple]] = DEFAULT_REMOTE_COMPONENTS,
+    sleep_interval: Optional[float] = DEFAULT_SLEEP_INTERVAL_SECONDS,
+    max_sleep_interval: Optional[float] = DEFAULT_MAX_SLEEP_INTERVAL_SECONDS,
 ) -> dict:
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
@@ -189,6 +201,16 @@ def _build_ydl_opts(
         # Lets yt-dlp fetch the EJS challenge-solver scripts themselves (the
         # code the JS runtime above actually executes) on demand from GitHub.
         opts["remote_components"] = resolved_remote_components
+
+    if sleep_interval is not None:
+        # Minimum delay (seconds) yt-dlp waits before each download. Combined
+        # with max_sleep_interval below, yt-dlp sleeps a random duration
+        # uniformly between the two, making request timing look less
+        # bot-like. (yt-dlp requires sleep_interval to be set whenever
+        # max_sleep_interval is -- it errors with a bare max_sleep_interval.)
+        opts["sleep_interval"] = sleep_interval
+        if max_sleep_interval is not None:
+            opts["max_sleep_interval"] = max_sleep_interval
 
     return opts
 
@@ -242,6 +264,8 @@ def download_audio(
     cookies_file: Optional[str] = DEFAULT_COOKIES_FILE,
     js_runtime: Optional[str] = DEFAULT_JS_RUNTIME,
     remote_components: Optional[Union[str, List[str], tuple]] = DEFAULT_REMOTE_COMPONENTS,
+    sleep_interval: Optional[float] = DEFAULT_SLEEP_INTERVAL_SECONDS,
+    max_sleep_interval: Optional[float] = DEFAULT_MAX_SLEEP_INTERVAL_SECONDS,
 ) -> str:
     """Download the audio track of a YouTube video and save it to disk.
 
@@ -271,6 +295,15 @@ def download_audio(
             demand, e.g. ``"ejs:github"`` (default) to download the EJS
             challenge-solver scripts from GitHub so ``js_runtime`` has
             something to execute. Pass ``None``/empty to disable.
+        sleep_interval: Minimum number of seconds yt-dlp sleeps before each
+            download (default: 5). When ``max_sleep_interval`` is also set,
+            the actual sleep is a random duration uniformly chosen between
+            the two, which helps avoid YouTube's rate-limiting/bot-detection
+            when making many requests from the same IP. Pass ``None`` to
+            disable sleeping entirely.
+        max_sleep_interval: Maximum number of seconds yt-dlp sleeps before
+            each download (default: 15). Only used if ``sleep_interval`` is
+            also set.
 
     Returns:
         The absolute path to the downloaded audio file.
@@ -289,6 +322,8 @@ def download_audio(
         cookies_file=cookies_file,
         js_runtime=js_runtime,
         remote_components=remote_components,
+        sleep_interval=sleep_interval,
+        max_sleep_interval=max_sleep_interval,
     )
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -311,6 +346,8 @@ def search_and_download_audio(
     cookies_file: Optional[str] = DEFAULT_COOKIES_FILE,
     js_runtime: Optional[str] = DEFAULT_JS_RUNTIME,
     remote_components: Optional[Union[str, List[str], tuple]] = DEFAULT_REMOTE_COMPONENTS,
+    sleep_interval: Optional[float] = DEFAULT_SLEEP_INTERVAL_SECONDS,
+    max_sleep_interval: Optional[float] = DEFAULT_MAX_SLEEP_INTERVAL_SECONDS,
 ) -> str:
     """Search YouTube for ``query`` and download the audio of the top match.
 
@@ -337,6 +374,10 @@ def search_and_download_audio(
             (default: ``"node"``), see ``download_audio`` for details.
         remote_components: Remote component(s) yt-dlp may fetch on demand
             (default: ``"ejs:github"``), see ``download_audio`` for details.
+        sleep_interval: Minimum seconds yt-dlp sleeps before each download
+            (default: 5), see ``download_audio`` for details.
+        max_sleep_interval: Maximum seconds yt-dlp sleeps before each
+            download (default: 15), see ``download_audio`` for details.
 
     Returns:
         The absolute path to the downloaded audio file.
@@ -359,6 +400,8 @@ def search_and_download_audio(
         cookies_file=cookies_file,
         js_runtime=js_runtime,
         remote_components=remote_components,
+        sleep_interval=sleep_interval,
+        max_sleep_interval=max_sleep_interval,
     )
     search_term = f"ytsearch{max_results}:{query.strip()}"
 
@@ -382,6 +425,8 @@ def search_and_download_many(
     cookies_file: Optional[str] = DEFAULT_COOKIES_FILE,
     js_runtime: Optional[str] = DEFAULT_JS_RUNTIME,
     remote_components: Optional[Union[str, List[str], tuple]] = DEFAULT_REMOTE_COMPONENTS,
+    sleep_interval: Optional[float] = DEFAULT_SLEEP_INTERVAL_SECONDS,
+    max_sleep_interval: Optional[float] = DEFAULT_MAX_SLEEP_INTERVAL_SECONDS,
 ) -> List[str]:
     """Search YouTube for ``query`` and download audio for up to ``count`` results.
 
@@ -414,6 +459,14 @@ def search_and_download_many(
             (default: ``"node"``), see ``download_audio`` for details.
         remote_components: Remote component(s) yt-dlp may fetch on demand
             (default: ``"ejs:github"``), see ``download_audio`` for details.
+        sleep_interval: Minimum seconds yt-dlp sleeps before each download
+            (default: 5), see ``download_audio`` for details. Especially
+            relevant here, since this function issues many requests
+            back-to-back -- without spacing them out, YouTube is much more
+            likely to rate-limit or block the (likely datacenter) IP making
+            the requests.
+        max_sleep_interval: Maximum seconds yt-dlp sleeps before each
+            download (default: 15), see ``download_audio`` for details.
 
     Returns:
         A list of paths to the successfully downloaded audio files. May have
@@ -438,6 +491,8 @@ def search_and_download_many(
         cookies_file=cookies_file,
         js_runtime=js_runtime,
         remote_components=remote_components,
+        sleep_interval=sleep_interval,
+        max_sleep_interval=max_sleep_interval,
     )
     # Over-fetch search results: ytsearchN sometimes returns non-video entries
     # (e.g. a channel or "YoutubeTab" page instead of an actual video), which
@@ -588,6 +643,24 @@ def main(argv: Optional[list] = None) -> None:
         "above actually solve YouTube's JS challenge by downloading the EJS "
         "challenge-solver scripts from GitHub. Pass an empty string to disable.",
     )
+    parser.add_argument(
+        "--sleep-interval",
+        type=float,
+        default=DEFAULT_SLEEP_INTERVAL_SECONDS,
+        help="Minimum number of seconds yt-dlp sleeps before each download "
+        f"(default: {DEFAULT_SLEEP_INTERVAL_SECONDS}). Combined with "
+        "--max-sleep-interval, the actual sleep is a random duration between "
+        "the two, reducing the odds of YouTube's rate-limiting/bot-detection. "
+        "Pass a negative value to disable sleeping entirely.",
+    )
+    parser.add_argument(
+        "--max-sleep-interval",
+        type=float,
+        default=DEFAULT_MAX_SLEEP_INTERVAL_SECONDS,
+        help="Maximum number of seconds yt-dlp sleeps before each download "
+        f"(default: {DEFAULT_MAX_SLEEP_INTERVAL_SECONDS}). Only used if "
+        "--sleep-interval is also set (non-negative).",
+    )
     args = parser.parse_args(argv)
 
     query = args.query or input("Wpisz słowo/frazę do wyszukania na YouTube: ").strip()
@@ -600,6 +673,12 @@ def main(argv: Optional[list] = None) -> None:
         if args.remote_components
         else None
     )
+    sleep_interval = args.sleep_interval if args.sleep_interval is not None and args.sleep_interval >= 0 else None
+    max_sleep_interval = (
+        args.max_sleep_interval
+        if sleep_interval is not None and args.max_sleep_interval is not None and args.max_sleep_interval >= 0
+        else None
+    )
 
     if args.count == 1:
         path = search_and_download_audio(
@@ -610,6 +689,8 @@ def main(argv: Optional[list] = None) -> None:
             cookies_file=args.cookies_file,
             js_runtime=args.js_runtime,
             remote_components=remote_components,
+            sleep_interval=sleep_interval,
+            max_sleep_interval=max_sleep_interval,
         )
         print(f"Pobrano: {path}")
     else:
@@ -622,6 +703,8 @@ def main(argv: Optional[list] = None) -> None:
             cookies_file=args.cookies_file,
             js_runtime=args.js_runtime,
             remote_components=remote_components,
+            sleep_interval=sleep_interval,
+            max_sleep_interval=max_sleep_interval,
         )
         print(f"Pobrano {len(paths)}/{args.count} plik(ów) dla zapytania '{query}'.")
 
