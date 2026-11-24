@@ -55,3 +55,24 @@ download:
 generate:
   num_samples: 1
   sample_rate: 22050
+
+# ---- Internet Archive download stage parameters (dvc.yaml: download_ia) ----
+# Only content explicitly licensed for reuse (e.g. Creative Commons) or your
+# own uploads should be downloaded. The CC license filter is applied by
+# default via cc_license_urls.
+ia_download:
+  # Free-text search phrase for Internet Archive (e.g. "voice narration",
+  # "poetry reading", "language lesson").
+  query: "voice narration"
+  output_dir: "cc_audio_downloads"
+  audio_format: "mp3"
+  count: 50
+  # Skip items longer than this many seconds (default: 7200 = 2 hours).
+  # Use 0 to disable the limit.
+  max_duration_seconds: 7200
+  # Creative Commons / open license URL substrings to require. Defaults
+  # cover CC BY, CC BY-SA, CC BY-NC, CC BY-NC-SA, CC BY-ND, CC BY-NC-ND,
+  # CC0, and PDM. Pass empty string to disable (not recommended).
+  cc_license_urls: "creativecommons.org/licenses/by/4.0,creativecommons.org/licenses/by-sa/4.0,creativecommons.org/licenses/by-nc/4.0,creativecommons.org/licenses/by-nc-sa/4.0,creativecommons.org/licenses/by-nd/4.0,creativecommons.org/licenses/by-nc-nd/4.0,creativecommons.org/publicdomain/zero/1.0,creativecommons.org/publicdomain/mark/1.0"
+  # Ordered list of preferred audio extensions when an item has multiple files.
+  preferred_formats: "mp3,flac,wav,ogg,m4a,aac"

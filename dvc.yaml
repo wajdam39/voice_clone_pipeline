@@ -56,6 +56,36 @@ stages:
       - data/raw:
           persist: true
 
+  # ---- Stage 1b: Pobieranie z Internet Archive (Creative Commons audio) ----
+  # Alternatywne źródło danych: audio na licencjach CC z archive.org.
+  # Niezależne od etapu YouTube (download) — można użyć jednego lub drugiego
+  # lub obu (dane lądują w różnych katalogach: data/raw vs cc_audio_downloads).
+  download_ia:
+    cmd: >-
+      python -m downloader.internet_archive_downloader "${ia_download.query}"
+      --output-dir ${ia_download.output_dir}
+      --format ${ia_download.audio_format}
+      --count ${ia_download.count}
+      --max-duration ${ia_download.max_duration_seconds}
+      --cc-license-urls "${ia_download.cc_license_urls}"
+      --preferred-formats "${ia_download.preferred_formats}"
+    deps:
+      - downloader/internet_archive_downloader.py
+    params:
+      - ia_download.query
+      - ia_download.output_dir
+      - ia_download.audio_format
+      - ia_download.count
+      - ia_download.max_duration_seconds
+      - ia_download.cc_license_urls
+      - ia_download.preferred_formats
+    outs:
+      # persist: true -- download is network-dependent/non-deterministic and
+      # the dataset is meant to grow across runs; don't wipe previously
+      # downloaded audio before re-running.
+      - cc_audio_downloads:
+          persist: true
+
   # ---- Stage 2: Przygotowanie (preprocess: audio -> mel-spectrogram .npy) ----
   preprocess:
     cmd: >-

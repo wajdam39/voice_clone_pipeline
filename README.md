@@ -8,8 +8,9 @@ akustycznego oraz synteza fali audio za pomocą wokodera.
 
 ```
 voice_clone_pipeline/
-├── downloader/         # pobieranie audio z YouTube
-│   └── youtube_downloader.py
+├── downloader/         # pobieranie audio (YouTube, Internet Archive)
+│   ├── youtube_downloader.py   # pobieranie z YouTube (yt-dlp)
+│   └── internet_archive_downloader.py  # pobieranie CC audio z archive.org
 ├── preprocessing/       # przygotowanie danych audio
 │   ├── audio_utils.py
 │   └── spectrogram.py
@@ -637,8 +638,11 @@ Pełna lista opcji: `--raw-dir`, `--processed-dir`, `--normalized-dir`,
 ### Pipeline DVC (`dvc.yaml`, `params.yaml`)
 
 Te same 5 etapów co w `scripts/run_pipeline.py` są też zdefiniowane jako
-**pipeline [DVC](https://dvc.org)** (`dvc.yaml`), podzielony na 5 niezależnie
-cache'owalnych stage'ów: `download → preprocess → normalize → train → generate`.
+**pipeline [DVC](https://dvc.org)** (`dvc.yaml`), podzielony na niezależnie
+cache'owalne stage'y: `download → download_ia → preprocess → normalize → train → generate`.
+Etapy `download` (YouTube) i `download_ia` (Internet Archive) są
+niezależne — można uruchomić jeden, drugi lub oba (dane lądują w
+różnych katalogach: `data/raw` vs `cc_audio_downloads`).
 Dzięki temu `dvc repro` uruchamia **tylko** te etapy, których zależności
 (kod, dane wejściowe lub parametry z `configs/config.yaml`/`params.yaml`)
 faktycznie się zmieniły — reszta jest odtwarzana z cache'u DVC.
@@ -803,9 +807,82 @@ python -m downloader.youtube_downloader "fraza" --output-dir data/raw --format m
 > **Wymaganie:** do konwersji pobranego strumienia na docelowy format audio
 > (wav/mp3) wymagany jest zainstalowany i dostępny w PATH systemu **FFmpeg**.
 
+### Pobieranie z Internet Archive (Creative Commons audio)
+
+Alternatywnym, w pełnie legalnym źródłem treningowym jest **Internet Archive**
+(archive.org) — ogromna biblioteka cyfrowa z milionami utworów udostępnionych
+na licencjach **Creative Commons** i innych otwartych licencjach. Projekt
+zawiera osobny moduł `downloader.internet_archive_downloader`, który korzysta
+z darmowego API Advanced Search archive.org (brak klucza API, brak rejestracji)
+i filtruje wyniki wyłącznie do objektów na licencjach CC / public domain.
+
+**Skąd pochodzą dane:** archive.org — tylko obiekty z `mediatype:audio` i
+`licenseurl` pasującym do wzorców CC (CC BY, CC BY-SA, CC BY-NC,
+CC BY-NC-SA, CC BY-ND, CC BY-NC-ND, CC0, PDM).
+
+> ⚠️ **Uwaga prawna:** archive.org hostuje obiekty na wielu różnych
+> licencjach. Moduł domyślnie filtruje do CC/otwartych, ale to użytkownik
+> odpowiada za weryfikację licencji każdego obiektu przed jego reuse (np. w
+> treningu modelu klonowania głosu). Pobieraj i używaj wyłącznie treści, do
+> których masz prawa.
+
+**1. Pojedyncze pobranie po identyfikatorze:**
+```python
+from downloader.internet_archive_downloader import download_audio
+
+path = download_audio("some-archive-item", output_dir="cc_audio_downloads")
+print(f"Pobrano: {path}")
+```
+
+**2. Wyszukiwanie i pobranie najlepszego dopasowania:**
+```python
+from downloader.internet_archive_downloader import search_and_download_audio
+
+path = search_and_download_audio(
+    "voice narration",
+    output_dir="cc_audio_downloads",
+    count=1,
+)
+print(f"Pobrano: {path}")
+```
+
+**3. Masowe pobieranie wielu utworów na podstawie jednego słowa:**
+```python
+from downloader.internet_archive_downloader import search_and_download_many
+
+paths = search_and_download_many(
+    "poetry reading",
+    output_dir="cc_audio_downloads",
+    count=200,
+)
+print(f"Pobrano {len(paths)}/200 plik(ów)")
+```
+
+**CLI:**
+```bash
+# Pojedyncze pobranie po frazie:
+python -m downloader.internet_archive_downloader "voice narration"
+
+# Masowe pobieranie (np. 200 utworów):
+python -m downloader.internet_archive_downloader "poetry reading" --count 200
+
+# Z niestandardowym katalogiem wyjściowym i limitem długości:
+python -m downloader.internet_archive_downloader "language lesson" \
+    --output-dir cc_audio_downloads \
+    --count 100 \
+    --max-duration 1800 \
+    --preferred-formats mp3,flac
+```
+
+Opcjonalne argumenty CLI: `--output-dir`, `--format` (mp3/wav/flac), `--count`,
+`--max-duration` (sekundy; 0 lub ujemna wyłącza limit),
+`--cc-license-urls` (lista substringów licencji CC), `--preferred-formats`,
+`--fail-fast`.
+
 ## Roadmapa
 
 - [x] Implementacja `youtube_downloader.py` (yt-dlp)
+- [x] Implementacja `internet_archive_downloader.py` (pobieranie CC audio z archive.org)
 - [x] Implementacja preprocessing audio + mel-spektrogramów
 - [x] Zdefiniowanie architektury modelu akustycznego (2D U-Net + dyfuzja DDPM)
 - [x] Pętla treningowa (`train.py`)

@@ -29,6 +29,7 @@ wandb/
 data/raw/
 data/processed/
 data/processed_normalized/
+cc_audio_downloads/
 pretrained_models/
 *.wav
 *.mp3
