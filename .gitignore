@@ -54,3 +54,8 @@ Thumbs.db
 pip_install.log
 pip_install.pid
 pip_install_err.log
+
+# randevoux leftovers (not part of this project)
+build_apk.err
+build_apk.log
+node_modules/
